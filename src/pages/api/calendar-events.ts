@@ -1,56 +1,223 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { getCalendarEvents } from '../../utils/googleCalendar';
+import { NextApiRequest, NextApiResponse } from 'next';
+import { google } from 'googleapis';
+import { JWT } from 'google-auth-library';
+
+interface GoogleCredentials {
+  type: string;
+  project_id: string;
+  private_key_id: string;
+  private_key: string;
+  client_email: string;
+  client_id: string;
+  auth_uri: string;
+  token_uri: string;
+  auth_provider_x509_cert_url: string;
+  client_x509_cert_url: string;
+}
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  if (req.method !== 'POST') {
+  if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const { startDate, endDate } = req.body;
+    // 解析 Google 憑證
+    console.log('GOOGLE_CREDENTIALS available:', !!process.env.GOOGLE_CREDENTIALS);
 
-    if (!startDate || !endDate) {
-      return res.status(400).json({ error: '缺少必要的日期參數' });
+    let credentials;
+    try {
+      credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS || '{}') as GoogleCredentials;
+      console.log('Credentials parsed successfully');
+    } catch (parseError) {
+      console.error('Error parsing Google credentials:', parseError);
+      return res.status(500).json({
+        error: 'Error parsing Google credentials',
+        details: parseError instanceof Error ? parseError.message : 'Unknown parsing error'
+      });
     }
 
-    if (!process.env.CALENDAR_ID) {
-      console.error('未設置 CALENDAR_ID 環境變量');
-      return res.status(500).json({ error: '未設置日曆 ID' });
+    if (!credentials.client_email || !credentials.private_key) {
+      console.error('Google credentials are missing or invalid');
+      return res.status(500).json({
+        error: 'Google credentials are missing or invalid',
+        credentialsCheck: {
+          hasClientEmail: !!credentials.client_email,
+          hasPrivateKey: !!credentials.private_key
+        }
+      });
     }
 
-    console.log('收到日曆事件請求:', {
-      startDate,
-      endDate,
-      calendarId: process.env.CALENDAR_ID,
-      hasCredentials: !!process.env.GOOGLE_CREDENTIALS
+    // 確保 private_key 中的換行符正確
+    console.log('Private key length before processing:', credentials.private_key.length);
+
+    // 先將所有 \n 替換為真正的換行符
+    let privateKey = credentials.private_key;
+    if (privateKey.includes('\\n')) {
+      privateKey = privateKey.replace(/\\n/g, '\n');
+    }
+
+    // 嘗試使用原始的 private_key
+    try {
+      // 創建 JWT 客戶端
+      const auth = new JWT({
+        email: credentials.client_email,
+        key: credentials.private_key,
+        scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+        subject: credentials.client_email,
+      });
+
+      // 測試認證
+      await auth.authorize();
+      console.log('Authentication successful with original private key');
+
+      // 繼續使用原始的 private_key
+      privateKey = credentials.private_key;
+    } catch (authError) {
+      console.error('Error with original private key, trying processed key:', authError);
+
+      // 確保私鑰是正確的格式
+      if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----')) {
+        privateKey = `-----BEGIN PRIVATE KEY-----\n${privateKey.replace(/-----BEGIN PRIVATE KEY-----/g, '')}`;
+      }
+      if (!privateKey.endsWith('-----END PRIVATE KEY-----')) {
+        privateKey = `${privateKey.replace(/-----END PRIVATE KEY-----/g, '')}\n-----END PRIVATE KEY-----`;
+      }
+    }
+
+    console.log('Private key length after processing:', privateKey.length);
+    console.log('Private key starts with correct header:', privateKey.startsWith('-----BEGIN PRIVATE KEY-----'));
+    console.log('Private key ends with correct footer:', privateKey.endsWith('-----END PRIVATE KEY-----'));
+
+    // 創建 JWT 客戶端
+    let auth;
+    try {
+      auth = new JWT({
+        email: credentials.client_email,
+        key: privateKey,
+        scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+        subject: credentials.client_email,
+        keyId: credentials.private_key_id,
+        projectId: credentials.project_id
+      });
+
+      // 測試認證
+      await auth.authorize();
+      console.log('Authentication successful with JWT client');
+    } catch (authError) {
+      console.error('Error creating JWT client:', authError);
+      return res.status(500).json({
+        error: 'Google API 認證失敗',
+        details: authError instanceof Error ? authError.message : '未知認證錯誤'
+      });
+    }
+
+    // 獲取日曆 ID
+    console.log('Checking for CALENDAR_ID');
+    const calendarId = process.env.CALENDAR_ID;
+    console.log('CALENDAR_ID available:', !!calendarId);
+    if (!calendarId) {
+      console.error('Calendar ID is missing');
+      return res.status(500).json({ error: 'Calendar ID is missing' });
+    }
+
+    // 獲取時間範圍
+    const { start, end } = req.query;
+    const timeMin = start ? new Date(start as string).toISOString() : new Date().toISOString();
+    const timeMax = end ? new Date(end as string).toISOString() : new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString();
+
+    console.log('準備獲取行事曆事件:', {
+      calendarId,
+      timeMin,
+      timeMax,
+      clientEmail: credentials.client_email
     });
 
-    const events = await getCalendarEvents(startDate, endDate);
+    // 創建日曆 API 客戶端
+    const calendar = google.calendar({ version: 'v3', auth });
 
-    console.log('成功獲取日曆事件:', {
-      count: events.length,
-      firstEvent: events[0] ? {
-        summary: events[0].summary,
-        start: events[0].start,
-        end: events[0].end
-      } : null
+    // 獲取事件
+    const response = await calendar.events.list({
+      calendarId,
+      timeMin,
+      timeMax,
+      singleEvents: true,
+      orderBy: 'startTime',
     });
+
+    // 轉換事件格式
+    const events = response.data.items?.map(event => ({
+      id: event.id,
+      title: event.summary || '無標題',
+      start: event.start?.dateTime || event.start?.date,
+      end: event.end?.dateTime || event.end?.date,
+      color: getColorHex(event.colorId || undefined),
+      description: event.description || '',
+      location: event.location || '',
+    })) || [];
 
     return res.status(200).json(events);
   } catch (error) {
-    console.error('處理日曆事件請求失敗:', error);
+    console.error('獲取行事曆事件失敗:', error);
+
+    // 更詳細的錯誤信息
+    let errorDetails = '未知錯誤';
+    let errorCode = '';
+
     if (error instanceof Error) {
-      return res.status(500).json({ 
-        error: '獲取日曆事件失敗',
-        details: error.message,
-        stack: error.stack,
-        calendarId: process.env.CALENDAR_ID,
-        hasCredentials: !!process.env.GOOGLE_CREDENTIALS
-      });
+      errorDetails = error.message;
+      // @ts-ignore
+      if (error.code) {
+        // @ts-ignore
+        errorCode = error.code;
+      }
+
+      // 如果是 Google API 錯誤，可能有更多信息
+      // @ts-ignore
+      if (error.errors && Array.isArray(error.errors)) {
+        // @ts-ignore
+        errorDetails = error.errors.map(e => e.message).join(', ');
+      }
     }
-    return res.status(500).json({ error: '獲取日曆事件失敗' });
+
+    return res.status(500).json({
+      error: '獲取行事曆事件失敗',
+      details: errorDetails,
+      code: errorCode,
+      stack: process.env.NODE_ENV !== 'production' ? (error instanceof Error ? error.stack : '') : undefined
+    });
   }
-} 
+}
+
+// 將 Google Calendar 顏色 ID 轉換為十六進制顏色代碼
+function getColorHex(colorId: string | undefined): string {
+  const colorMap: { [key: string]: string } = {
+    '1': '#7986CB', // 薰衣草
+    '2': '#33B679', // 鼠尾草
+    '3': '#8E24AA', // 葡萄
+    '4': '#E67C73', // 紅
+    '5': '#F6C026', // 香蕉
+    '6': '#F5511D', // 南瓜
+    '7': '#039BE5', // 孔雀
+    '8': '#616161', // 石墨
+    '9': '#3F51B5', // 藍莓
+    '10': '#0B8043', // 羅勒
+    '11': '#D60000', // 番茄
+    '12': '#E91E63', // 火烈鳥
+    '13': '#F57F17', // 芒果
+    '14': '#7CB342', // 鱷梨
+    '15': '#1DE9B6', // 薄荷
+    '16': '#FF1744', // 櫻桃
+    '17': '#D500F9', // 葡萄柚
+    '18': '#FFD600', // 香蕉
+    '19': '#00C853', // 羅勒
+    '20': '#FF3D00', // 番茄
+    '21': '#304FFE', // 藍莓
+    '22': '#00BFA5', // 薄荷
+    '23': '#FF1744', // 櫻桃
+    '24': '#D500F9', // 葡萄柚
+  };
+  return colorMap[colorId || '1'] || '#7986CB';
+}

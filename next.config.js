@@ -5,6 +5,10 @@ const nextConfig = {
     GOOGLE_CREDENTIALS: process.env.GOOGLE_CREDENTIALS,
     CALENDAR_ID: process.env.CALENDAR_ID,
   },
+  images: {
+    domains: [],
+    unoptimized: true,
+  },
 }
 
 module.exports = nextConfig 

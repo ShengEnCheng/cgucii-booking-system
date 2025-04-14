@@ -1,109 +1,110 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { createCalendarEvent, checkAvailability } from '../../utils/googleCalendar';
+import { NextApiRequest, NextApiResponse } from 'next';
+import { google } from 'googleapis';
+import { JWT } from 'google-auth-library';
+
+interface GoogleCredentials {
+  type: string;
+  project_id: string;
+  private_key_id: string;
+  private_key: string;
+  client_email: string;
+  client_id: string;
+  auth_uri: string;
+  token_uri: string;
+  auth_provider_x509_cert_url: string;
+  client_x509_cert_url: string;
+}
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ message: '方法不允許' });
-  }
-
-  // 驗證請求數據
-  const requiredFields = ['name', 'phone', 'email', 'participants', 'date', 'startTime', 'endTime', 'spaceName'];
-  const missingFields = requiredFields.filter(field => !req.body[field]);
-
-  if (missingFields.length > 0) {
-    console.error('缺少必要欄位:', missingFields);
-    return res.status(400).json({ 
-      message: '缺少必要欄位',
-      missingFields 
-    });
-  }
-
-  // 驗證環境變量
-  if (!process.env.GOOGLE_CREDENTIALS) {
-    console.error('缺少 GOOGLE_CREDENTIALS 環境變量');
-    return res.status(500).json({ 
-      message: '系統配置錯誤：缺少 Google 認證信息',
-      error: 'Missing credentials'
-    });
-  }
-
-  if (!process.env.CALENDAR_ID) {
-    console.error('缺少 CALENDAR_ID 環境變量');
-    return res.status(500).json({ 
-      message: '系統配置錯誤：缺少日曆 ID',
-      error: 'Missing calendar ID'
-    });
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    console.log('收到預約請求:', {
-      ...req.body,
-      participants: parseInt(req.body.participants)
-    });
+    const {
+      name,
+      phone,
+      email,
+      participants,
+      date,
+      startTime,
+      endTime,
+      unit,
+      department,
+      departmentName,
+      spaceName,
+      colorId,
+    } = req.body;
 
-    // 檢查時段是否已被預約
-    const isAvailable = await checkAvailability(
-      req.body.date,
-      req.body.startTime,
-      req.body.endTime,
-      req.body.spaceName
-    );
-
-    if (!isAvailable) {
-      return res.status(400).json({
-        message: `${req.body.spaceName} 在該時段已被預約，請選擇其他時間或空間`,
-        error: 'Time slot already booked'
-      });
+    // 解析 Google 憑證
+    const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS || '{}') as GoogleCredentials;
+    
+    if (!credentials.client_email || !credentials.private_key) {
+      console.error('Google credentials are missing or invalid');
+      return res.status(500).json({ error: 'Google credentials are missing or invalid' });
     }
 
-    // 創建 Google Calendar 事件
-    const event = await createCalendarEvent(req.body);
-    console.log('成功創建日曆事件:', event);
-    
-    res.status(200).json({ 
+    // 確保 private_key 中的換行符正確
+    const privateKey = credentials.private_key.replace(/\\n/g, '\n');
+
+    // 創建 JWT 客戶端
+    const auth = new JWT({
+      email: credentials.client_email,
+      key: privateKey,
+      scopes: ['https://www.googleapis.com/auth/calendar'],
+      subject: credentials.client_email,
+      keyId: credentials.private_key_id
+    });
+
+    // 獲取日曆 ID
+    const calendarId = process.env.CALENDAR_ID;
+    if (!calendarId) {
+      console.error('Calendar ID is missing');
+      return res.status(500).json({ error: 'Calendar ID is missing' });
+    }
+
+    // 創建日曆 API 客戶端
+    const calendar = google.calendar({ version: 'v3', auth });
+
+    // 準備事件數據
+    const event = {
+      summary: `${spaceName} - ${department}${departmentName ? ` - ${departmentName}` : ''}`,
+      description: `
+申請者：${name}
+電話：${phone}
+Email：${email}
+參加人數：${participants}人
+申請單位：${unit}
+      `.trim(),
+      start: {
+        dateTime: `${date}T${startTime}:00`,
+        timeZone: 'Asia/Taipei',
+      },
+      end: {
+        dateTime: `${date}T${endTime}:00`,
+        timeZone: 'Asia/Taipei',
+      },
+      colorId: colorId,
+    };
+
+    // 創建事件
+    const response = await calendar.events.insert({
+      calendarId,
+      requestBody: event,
+    });
+
+    return res.status(200).json({
       message: '預約成功',
-      data: {
-        ...req.body,
-        eventId: event.id
-      }
+      eventId: response.data.id,
     });
   } catch (error) {
-    console.error('預約處理錯誤:', error);
-    
-    // 根據錯誤類型返回不同的錯誤信息
-    if (error instanceof Error) {
-      if (error.message.includes('credentials')) {
-        return res.status(500).json({ 
-          message: '系統配置錯誤，請聯繫管理員',
-          error: '認證失敗'
-        });
-      }
-      if (error.message.includes('calendar')) {
-        return res.status(500).json({ 
-          message: '日曆同步失敗，請稍後再試',
-          error: error.message
-        });
-      }
-      if (error.message.includes('無效的日期或時間格式')) {
-        return res.status(400).json({ 
-          message: '請檢查日期和時間格式是否正確',
-          error: error.message
-        });
-      }
-      if (error.message.includes('結束時間必須在開始時間之後')) {
-        return res.status(400).json({ 
-          message: '結束時間必須在開始時間之後',
-          error: error.message
-        });
-      }
-    }
-
-    res.status(500).json({ 
-      message: '預約處理失敗',
-      error: error instanceof Error ? error.message : '未知錯誤'
+    console.error('創建行事曆事件失敗:', error);
+    return res.status(500).json({
+      error: '預約失敗',
+      details: error instanceof Error ? error.message : '未知錯誤',
     });
   }
 } 
