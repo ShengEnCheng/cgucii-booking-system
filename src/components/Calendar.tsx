@@ -1,160 +1,145 @@
-import React, { useState, useEffect } from 'react';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay } from 'date-fns';
-import { zhTW } from 'date-fns/locale';
+import { useEffect, useState } from 'react';
+import FullCalendar from '@fullcalendar/react';
+import dayGridPlugin from '@fullcalendar/daygrid';
+import timeGridPlugin from '@fullcalendar/timegrid';
+import interactionPlugin from '@fullcalendar/interaction';
+import { spaces } from '../data/spaces';
 
-interface CalendarEvent {
+interface Event {
   id: string;
-  summary: string;
-  start: {
-    dateTime: string;
-  };
-  end: {
-    dateTime: string;
-  };
-  colorId?: string;
+  title: string;
+  start: string;
+  end: string;
+  backgroundColor: string;
+  borderColor: string;
 }
 
 interface CalendarProps {
-  className?: string;
+  selectedSpaceId?: string;
 }
 
-export default function Calendar({ className }: CalendarProps) {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
+export default function Calendar({ selectedSpaceId }: CalendarProps = {}) {
+  const [events, setEvents] = useState<Event[]>([]);
+  const [filteredEvents, setFilteredEvents] = useState<Event[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchEvents = async () => {
-      try {
-        const startDate = startOfMonth(currentDate).toISOString();
-        const endDate = endOfMonth(currentDate).toISOString();
-
-        console.log('正在請求日曆事件:', {
-          startDate,
-          endDate,
-          currentDate: currentDate.toISOString()
-        });
-
-        const response = await fetch('/api/calendar-events', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ startDate, endDate }),
-        });
-
-        const responseData = await response.json();
-
-        if (!response.ok) {
-          console.error('獲取日曆事件失敗:', {
-            status: response.status,
-            statusText: response.statusText,
-            error: responseData
-          });
-          setEvents([]);
-          return;
-        }
-
-        console.log('成功獲取日曆事件:', {
-          count: responseData.length,
-          events: responseData
-        });
-        
-        setEvents(responseData || []);
-      } catch (error) {
-        console.error('日曆事件獲取錯誤:', error);
-        if (error instanceof Error) {
-          console.error('錯誤詳情:', {
-            message: error.message,
-            stack: error.stack
-          });
-        }
-        setEvents([]);
-      }
-    };
-
     fetchEvents();
-  }, [currentDate]);
+  }, []);
 
-  const days = eachDayOfInterval({
-    start: startOfMonth(currentDate),
-    end: endOfMonth(currentDate),
-  });
+  // 當 selectedSpaceId 或 events 變化時，過濾事件
+  useEffect(() => {
+    if (selectedSpaceId) {
+      const space = spaces.find(s => s.id === selectedSpaceId);
+      if (space) {
+        const filtered = events.filter(event => event.title.includes(space.name));
+        setFilteredEvents(filtered);
+      }
+    } else {
+      setFilteredEvents(events);
+    }
+  }, [selectedSpaceId, events]);
 
-  const getEventsForDay = (day: Date) => {
-    return events.filter((event) => {
-      const eventDate = new Date(event.start.dateTime);
-      return isSameDay(eventDate, day);
-    });
+  const fetchEvents = async () => {
+    try {
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+      const response = await fetch(
+        `/api/calendar-events?timeMin=${startOfMonth.toISOString()}&timeMax=${endOfMonth.toISOString()}`
+      );
+
+      if (!response.ok) {
+        throw new Error('獲取行事曆事件失敗');
+      }
+
+      const data = await response.json();
+      setEvents(data);
+      setFilteredEvents(data); // 初始化過濾後的事件
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '獲取行事曆事件失敗');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-96">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg">
+        {error}
+      </div>
+    );
+  }
+
+  // 空間選擇器
+  const renderSpaceFilter = () => {
+    return (
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">空間篩選</label>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={`px-3 py-1 rounded-full text-sm ${!selectedSpaceId ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+            onClick={() => window.location.href = '/'}
+          >
+            全部空間
+          </button>
+          {spaces.map(space => (
+            <button
+              key={space.id}
+              className={`px-3 py-1 rounded-full text-sm ${selectedSpaceId === space.id ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+              onClick={() => window.location.href = `/?space=${space.id}`}
+            >
+              {space.name}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   return (
-    <div className={`bg-white rounded-lg shadow ${className}`}>
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold text-gray-800">
-            {format(currentDate, 'yyyy年 MM月', { locale: zhTW })}
-          </h2>
-          <div className="flex space-x-2">
-            <button
-              onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() - 1)))}
-              className="p-2 text-gray-600 hover:text-gray-900"
-            >
-              ←
-            </button>
-            <button
-              onClick={() => setCurrentDate(new Date())}
-              className="p-2 text-sm text-gray-600 hover:text-gray-900"
-            >
-              今天
-            </button>
-            <button
-              onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() + 1)))}
-              className="p-2 text-gray-600 hover:text-gray-900"
-            >
-              →
-            </button>
-          </div>
-        </div>
+    <div className="bg-white rounded-lg shadow-md p-6">
+      <h2 className="text-2xl font-bold text-gray-900 mb-6">行事曆</h2>
 
-        <div className="grid grid-cols-7 gap-1 mb-2">
-          {['日', '一', '二', '三', '四', '五', '六'].map((day) => (
-            <div key={day} className="text-center text-sm font-medium text-gray-600">
-              {day}
-            </div>
-          ))}
-        </div>
+      {renderSpaceFilter()}
 
-        <div className="grid grid-cols-7 gap-1">
-          {days.map((day) => {
-            const dayEvents = getEventsForDay(day);
-            const isCurrentMonth = isSameMonth(day, currentDate);
-
-            return (
-              <div
-                key={day.toISOString()}
-                className={`min-h-[100px] p-2 border rounded ${
-                  isCurrentMonth ? 'bg-white' : 'bg-gray-50'
-                }`}
-              >
-                <div className={`text-sm ${isCurrentMonth ? 'text-gray-900' : 'text-gray-400'}`}>
-                  {format(day, 'd')}
-                </div>
-                <div className="mt-1">
-                  {dayEvents.map((event) => (
-                    <div
-                      key={event.id}
-                      className="text-xs p-1 mb-1 rounded bg-blue-100 text-blue-800 truncate"
-                      title={event.summary}
-                    >
-                      {event.summary}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <FullCalendar
+        plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+        initialView="dayGridMonth"
+        headerToolbar={{
+          left: 'prev,next today',
+          center: 'title',
+          right: 'dayGridMonth,timeGridWeek,timeGridDay'
+        }}
+        events={filteredEvents}
+        eventTimeFormat={{
+          hour: '2-digit',
+          minute: '2-digit',
+          meridiem: false
+        }}
+        slotMinTime="08:00:00"
+        slotMaxTime="22:00:00"
+        allDaySlot={false}
+        height="auto"
+        locale="zh-tw"
+        buttonText={{
+          today: '今天',
+          month: '月',
+          week: '週',
+          day: '日',
+          list: '列表'
+        }}
+      />
     </div>
   );
-} 
+}

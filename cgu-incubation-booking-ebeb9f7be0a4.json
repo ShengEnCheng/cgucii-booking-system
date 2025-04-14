@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "cgu-incubation-booking",
+  "private_key_id": "ebeb9f7be0a43e19a86fbf56a4bda2b3c907a623",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDfej4IQFgeDQGw\ntSohdmqrXZcBPjy34dHoc4RYqPHWBBY+yXxbmBD8iMIMdwiTUj/2YGqk6I/pmhgY\n/C178MMhgaD/Mal2R3VZKv/CzzXcyBv897e2fFaPzLetPLUik4PaAHSfdHlVFzOw\n2EdQqMF9WVawdcjMVxwpBoObfafpMiviBbe7v6lcKEkO94K+Eih8fviG/GbsiHsS\n8quujoZ8eyjx9daw4QX+Yk2jWgYV3kI6Bp0mLA+4suRxBqHQ/ZK4OzCVK46N2f0Y\n7Ejzs5VWB4qPo6aG5bX7i3E2Qz/imIAh//b/9rTXvHFoQdAsl3igEDF8xhiU47Fu\nLjM79xtbAgMBAAECggEABTF3mpFq41V8pLw9S6IcEkaqEKTDgsnA3j3Fg0S7qjzE\nrQmVSTLywdbKi+NopwpxCZwctttXNZuK4PMXz6EnuDqlYMWX+Le2/qJOibReAipG\nTZAOqiqoqk3x8dSgBinW8zC6hRI5rQ74EmCgjLL/xwVvS6d7MFGELGDS8PyWYn75\nr9UypAZMEsTgRkkwuGz+RGXww6MrCDFlTzoOQ4bVPFe4IFfFBOEUm4oAqOXqmbAT\ninAMuMogPBs5QpgSl11x5cuiPFrwVY8P+4JKNxbgwSRFQWpvlDADs4Vs8AGL9/qB\nTphXCnQGs+vanNNJOujsWiJ1m5xTd0NPfk/tQE3/AQKBgQD4aLtFGHdSxSOfXKnC\nbbSjAQoTWtBQBMNw2geGgMN1VN/XLIHo44v1CFgpDUKN1aXHMb40xUbSYg0R0A2X\nrDKiaMlslwzSRR1/IhCU5IxptITRfzaPDAPGSOoviZv6UQD+rsxxMmX0WicCA6D7\nWs5UoqHMKb9ujEcipDcXpfTsWwKBgQDmTnl5NNyNQPrcgCaSw31qWn4HarP21Bv+\neAbIA3TuaIxxW1NCDxLSsjfO8VvlISwTfYYQwCmcMYowNXMOIHYHr25xfSb2bYm7\nc7BPE/kLQL2sb+SoO223/cp9t7BE28UiVl2LpH6iHo/7tCoagYMonp6HziMhwzRO\n6Ob1zfm9AQKBgEepHu0N485S5LXia26Va1jiwd9XgWS0GxWBME6S8s/0TiaqxkdC\n7Wsgnx4onxx/l7VhGjfq+UVT1+Vdma45lNnZVNIouSAnpBy63QG29PLBitdM1ZZq\npuQawMQ59G8/0wOltYCqQ1M8dqhUF6qrRX6Q9BALsxfXC+ZobSQ7Ue6lAoGAZLVY\nJQpaj2Ik0JsxQug9RW6AwdmFDKBABYyS2o+4aDBLiZ430CErR/sqsFGWr6FL1tIC\n9/wvtd9r4BzfTQQg2Md78iCaExRfMBsss8e2FZef2XGseWxTVCukikjyyYmYsKU3\njsLFpTrcF2L3LlQH+JE0HYqkjjUAAKmTpVUGqgECgYEAzIAvIVSiuEviEnZZBFgd\nVOskGmxAVMeeRHEvX7HUQG8Rrv9toFgPrAhvQNIGjiaYBj4JNaecH7TiuXOUqyCQ\n7ff7Evn+TNmFJj3bPEgOuYggvkxuQGXhkVaFlbDei8wLjbBRz5Zfmx+LjCNYw63W\nH8Wt2h7flu5uuz1iispDS2k=\n-----END PRIVATE KEY-----\n",
+  "client_email": "booking-system-service@cgu-incubation-booking.iam.gserviceaccount.com",
+  "client_id": "108156275788111610041",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/booking-system-service%40cgu-incubation-booking.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

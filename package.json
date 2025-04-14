@@ -9,12 +9,23 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@fullcalendar/core": "^6.1.15",
+    "@fullcalendar/daygrid": "^6.1.15",
+    "@fullcalendar/interaction": "^6.1.15",
+    "@fullcalendar/react": "^6.1.15",
+    "@fullcalendar/timegrid": "^6.1.15",
+    "@netlify/plugin-nextjs": "^4.41.3",
+    "@types/react-big-calendar": "^1.16.1",
     "date-fns": "^4.1.0",
+    "express": "^4.21.2",
     "google-auth-library": "^9.15.1",
     "googleapis": "^148.0.0",
+    "http-proxy-middleware": "^2.0.9",
     "next": "^15.2.4",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-big-calendar": "^1.18.0",
+    "react-dom": "^18.3.1",
+    "serverless-http": "^3.2.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.28",
