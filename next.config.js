@@ -1,14 +1,9 @@
+const path = require('path');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  env: {
-    GOOGLE_CREDENTIALS: process.env.GOOGLE_CREDENTIALS,
-    CALENDAR_ID: process.env.CALENDAR_ID,
-  },
-  images: {
-    domains: [],
-    unoptimized: true,
-  },
+  outputFileTracingRoot: path.join(__dirname, './'),
 }
 
-module.exports = nextConfig 
+module.exports = nextConfig

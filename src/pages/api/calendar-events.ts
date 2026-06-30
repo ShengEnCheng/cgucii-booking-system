@@ -116,17 +116,31 @@ export default async function handler(
 
     // 獲取日曆 ID
     console.log('Checking for CALENDAR_ID');
-    const calendarId = process.env.CALENDAR_ID;
+    let calendarId = process.env.CALENDAR_ID;
     console.log('CALENDAR_ID available:', !!calendarId);
+    try {
+      const fs = await import('fs')
+      const path = await import('path')
+      const p = path.join(process.cwd(), 'src', 'config', 'app-config.json')
+      try {
+        const raw = fs.readFileSync(p, 'utf8')
+        const cfg = JSON.parse(raw)
+        if (cfg.googleCalendarId && typeof cfg.googleCalendarId === 'string' && cfg.googleCalendarId.trim()) {
+          calendarId = cfg.googleCalendarId.trim()
+        }
+      } catch {}
+    } catch {}
     if (!calendarId) {
-      console.error('Calendar ID is missing');
-      return res.status(500).json({ error: 'Calendar ID is missing' });
+      console.error('Calendar ID is missing')
+      return res.status(500).json({ error: 'Calendar ID is missing' })
     }
 
-    // 獲取時間範圍
-    const { start, end } = req.query;
-    const timeMin = start ? new Date(start as string).toISOString() : new Date().toISOString();
-    const timeMax = end ? new Date(end as string).toISOString() : new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString();
+    // 獲取時間範圍（同時支援 start/end 與 timeMin/timeMax）
+    const { start, end, timeMin: qTimeMin, timeMax: qTimeMax } = req.query as Record<string, string | string[] | undefined>;
+    const rawMin = (Array.isArray(qTimeMin) ? qTimeMin[0] : qTimeMin) || (Array.isArray(start) ? start[0] : start);
+    const rawMax = (Array.isArray(qTimeMax) ? qTimeMax[0] : qTimeMax) || (Array.isArray(end) ? end[0] : end);
+    const timeMin = rawMin ? new Date(rawMin).toISOString() : new Date(new Date().setDate(1)).toISOString();
+    const timeMax = rawMax ? new Date(rawMax).toISOString() : new Date(new Date(new Date().setMonth(new Date().getMonth() + 1)).setDate(0)).toISOString();
 
     console.log('準備獲取行事曆事件:', {
       calendarId,
@@ -147,8 +161,7 @@ export default async function handler(
       orderBy: 'startTime',
     });
 
-    // 轉換事件格式
-    const events = response.data.items?.map(event => ({
+    let events = response.data.items?.map(event => ({
       id: event.id,
       title: event.summary || '無標題',
       start: event.start?.dateTime || event.start?.date,
@@ -158,6 +171,60 @@ export default async function handler(
       location: event.location || '',
     })) || [];
 
+    try {
+      const fs = await import('fs')
+      const path = await import('path')
+      const p = path.join(process.cwd(), 'src', 'config', 'app-config.json')
+      let filters: any = {}
+      let overrides: Record<string, { name?: string }> = {}
+      let useGoogleColors = true
+      try {
+        const raw = fs.readFileSync(p, 'utf8')
+        const cfg = JSON.parse(raw)
+        filters = cfg.eventFilters || {}
+        overrides = cfg.spaceOverrides || {}
+        useGoogleColors = typeof cfg.useGoogleColors === 'boolean' ? cfg.useGoogleColors : true
+      } catch {}
+      const names: string[] = require('@/data/spaces').spaces.map((s: any) => {
+        const o = overrides[s.id] || {}
+        const base = [s.name, o.name].filter(Boolean)
+        const aliases: string[] = []
+        if (s.id === '3') {
+          aliases.push('C01', 'C01會議室')
+        }
+        if (s.id === '4') {
+          aliases.push('C02', 'C02會議室', '中型C02會議室')
+        }
+        return base.concat(aliases)
+      }).flat().map((n: any) => String(n).toLowerCase())
+      const allow: string[] = Array.isArray(filters.allowKeywords) ? (filters.allowKeywords as any[]).map((kw: any) => String(kw).toLowerCase()) : []
+      const ignore: string[] = Array.isArray(filters.ignoreKeywords) ? (filters.ignoreKeywords as any[]).map((kw: any) => String(kw).toLowerCase()) : []
+      const spacesOnly = !!filters.spacesOnly
+      events = events.filter(ev => {
+        const t = String(ev.title || '').toLowerCase()
+        if (ignore.some(k => t.includes(k))) return false
+        if (allow.length > 0 && allow.some(k => t.includes(k))) return true
+        if (spacesOnly) return names.some(n => t.includes(n))
+        return true
+      })
+      if (!useGoogleColors) {
+        events = events.map(ev => {
+          const t = String(ev.title || '').toLowerCase()
+          if (t.includes('c01') || t.includes('c01會議室')) {
+            return { ...ev, color: '#D60000' }
+          }
+          if (t.includes('c02') || t.includes('c02會議室') || t.includes('中型c02會議室')) {
+            return { ...ev, color: '#F6C026' }
+          }
+          return ev
+        })
+      }
+    } catch {}
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
     return res.status(200).json(events);
   } catch (error) {
     console.error('獲取行事曆事件失敗:', error);

@@ -18,9 +18,9 @@ export function checkSpaceAvailability(
   startTime: string,
   endTime: string
 ): boolean {
-  // 將輸入的時間轉換為 Date 對象
-  const startDateTime = new Date(`${date}T${startTime}:00`);
-  const endDateTime = new Date(`${date}T${endTime}:00`);
+  // 將輸入的時間轉換為 Date 對象（明確使用台北時區 +08:00，避免 server 以 UTC 解析）
+  const startDateTime = new Date(`${date}T${startTime}:00+08:00`);
+  const endDateTime = new Date(`${date}T${endTime}:00+08:00`);
 
   // 檢查時間是否有效
   if (isNaN(startDateTime.getTime()) || isNaN(endDateTime.getTime())) {
@@ -32,9 +32,20 @@ export function checkSpaceAvailability(
     throw new Error('結束時間必須在開始時間之後');
   }
 
-  // 篩選出與指定空間相關的事件
+  // 建立別名關鍵字（不分大小寫）
+  const keywords: string[] = [spaceName]
+  const lowerSpace = spaceName.toLowerCase()
+  if (lowerSpace.includes('小會議室')) {
+    keywords.push('C01', 'C01會議室')
+  }
+  if (lowerSpace.includes('多功能會議室')) {
+    keywords.push('C02', 'C02會議室', '中型C02會議室')
+  }
+  const lowers = keywords.map(k => String(k).toLowerCase())
+  // 篩選出與指定空間（含別名）相關的事件
   const spaceEvents = events.filter(event => {
-    return event.title.includes(spaceName);
+    const t = String(event.title || '').toLowerCase()
+    return lowers.some(k => t.includes(k))
   });
 
   // 檢查是否有時間衝突
