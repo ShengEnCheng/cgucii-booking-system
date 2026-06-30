@@ -1,4 +1,4 @@
-import { Space } from '../types';
+import { Space } from '../types/index';
 
 export const spaces: Space[] = [
   {
@@ -29,7 +29,7 @@ export const spaces: Space[] = [
     image: '/images/space3.jpg',
     price: 300,
     features: ['投影設備', 'WiFi', '空調'],
-    colorId: '3' // 葡萄色
+    colorId: '11' // 番茄紅（Tomato）
   },
   {
     id: '4',
@@ -39,7 +39,7 @@ export const spaces: Space[] = [
     image: '/images/space4.jpg',
     price: 600,
     features: ['投影設備', '音響系統', 'WiFi', '空調'],
-    colorId: '4' // 紅色
+    colorId: '5' // 香蕉黃（Banana）
   },
   {
     id: '5',

@@ -5,6 +5,10 @@
 
 # Google API 認證
 google-credentials.json
+google-credentials.json.json
+service-account.json
+credentials.json
+cgu-incubation-booking-*.json
 *.json.key
 credentials/
 

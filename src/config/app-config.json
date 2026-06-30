@@ -1,0 +1,31 @@
+{
+  "logoPath": "/images/my-logo.svg",
+  "disabledSpaceIds": [
+    "2",
+    "1",
+    "5"
+  ],
+  "disabledSpaceNames": [
+    "共創空間",
+    "創新發想基地",
+    "DEMO ROOM"
+  ],
+  "spaceOverrides": {
+    "3": {
+      "name": "C01會議室"
+    },
+    "4": {
+      "name": "C02會議室"
+    }
+  },
+  "hideDisabled": true,
+  "formFields": {},
+  "eventFilters": {
+    "spacesOnly": false,
+    "allowKeywords": [],
+    "ignoreKeywords": [
+      "地板打蠟"
+    ]
+  },
+  "googleCalendarId": ""
+}
