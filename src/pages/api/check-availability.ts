@@ -14,7 +14,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const startISO = `${date}T00:00:00+08:00`
     const endISO = `${date}T23:59:59+08:00`
-    const base = process.env.NEXT_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`
+    // 注意：不能用 NEXT_PUBLIC_BASE_URL || http://localhost:3000 當作內部呼叫的網址。
+    // Vercel 這類 serverless 平台上根本沒有「localhost:3000」可以連，
+    // 這會導致這支 API 在正式環境永遠 fetch failed，
+    // 進而讓 BookingForm 誤判「所有時段都已被預約」。改用當次請求本身的
+    // host/協定組出正確的網址，本機開發、Vercel 正式環境都適用。
+    const proto = (req.headers['x-forwarded-proto'] as string) || 'http'
+    const host = req.headers.host
+    const base = `${proto}://${host}`
     const r = await fetch(`${base}/api/calendar-events?start=${encodeURIComponent(startISO)}&end=${encodeURIComponent(endISO)}&t=${Date.now()}`)
     if (!r.ok) {
       return res.status(500).json({ error: '取得事件失敗' })
