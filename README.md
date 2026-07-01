@@ -10,7 +10,8 @@
 - 線上預約系統
 - Google Calendar 整合
 - 響應式設計，支援各種裝置
-- Netlify 部署支援
+- Vercel 部署支援
+- 後台管理頁面（`/admin`，需 Basic Auth 登入）
 
 ## 環境設置
 
@@ -18,6 +19,8 @@
 
 1. `GOOGLE_CREDENTIALS`: Google Calendar API 服務帳戶認證
 2. `CALENDAR_ID`: Google Calendar ID
+3. `ADMIN_USERNAME` / `ADMIN_PASSWORD`: `/admin` 後台的 Basic Auth 帳號密碼（必填，未設定時後台會直接拒絕存取）
+4. `KV_REST_API_URL` / `KV_REST_API_TOKEN`：正式環境（Vercel）用來儲存後台設定，透過 Vercel KV 提供，本機開發可留空
 
 ### 本地開發設置
 
@@ -45,17 +48,22 @@ $ npm run build
 $ npm run start
 ```
 
-## Netlify 部署
+## Vercel 部署
 
-本專案已經配置好了 Netlify 部署所需的文件，可以直接部署到 Netlify。
+本專案已連結至 Vercel 專案（見 `.vercel/project.json`），可直接用 GitHub 整合或 Vercel CLI 部署，Vercel 會自動偵測 Next.js 專案設定，不需要額外的 `vercel.json`。
 
-詳細的部署步驟請參考 [NETLIFY_DEPLOYMENT.md](./NETLIFY_DEPLOYMENT.md) 文件。
+### 部署步驟
 
-### 測試構建
+1. 到 [Vercel](https://vercel.com/) 匯入這個 GitHub repo（或在專案目錄執行 `vercel --prod`）。
+2. 在 Vercel 專案的 Settings → Environment Variables 加入：
+   - `GOOGLE_CREDENTIALS`
+   - `CALENDAR_ID`
+   - `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+3. 到 Vercel 專案的 Storage 分頁建立一個 KV database 並連結到本專案，`KV_REST_API_URL` / `KV_REST_API_TOKEN` 會自動注入，不需手動設定。若略過此步驟，`/admin` 後台的設定變更在正式環境將無法保存。
+4. 部署完成後，用 `/api/admin/calendar-health` 端點確認 Google Calendar 憑證與連線正常。
+5. 之後每次 push 到 main 分支，Vercel 會自動重新部署。
 
-在部署到 Netlify 之前，您可以先在本地測試構建過程：
+### 後台管理
 
-```bash
-# 執行測試構建腳本
-$ ./build-netlify.sh
-```# cgucii-booking-system
+`/admin` 頁面需要 HTTP Basic Auth 才能進入，帳號密碼即 `ADMIN_USERNAME` / `ADMIN_PASSWORD`。
+# cgucii-booking-system

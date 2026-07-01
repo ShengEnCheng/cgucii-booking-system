@@ -1,8 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { google } from 'googleapis'
 import { JWT } from 'google-auth-library'
-import fs from 'fs'
-import path from 'path'
+import { readAppConfig } from '@/utils/appConfig'
 
 type Health = {
   env: {
@@ -43,9 +42,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   let calendarId = process.env.CALENDAR_ID || ''
 
   try {
-    const cfgPath = path.join(process.cwd(), 'src', 'config', 'app-config.json')
-    const raw = fs.readFileSync(cfgPath, 'utf8')
-    const cfg = JSON.parse(raw)
+    const cfg = await readAppConfig()
     if (cfg.googleCalendarId && typeof cfg.googleCalendarId === 'string' && cfg.googleCalendarId.trim()) {
       calendarId = cfg.googleCalendarId.trim()
       health.calendarId = { value: calendarId, from: 'config' }
@@ -74,7 +71,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       email: credentials.client_email,
       key: privateKey,
       scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
-      subject: credentials.client_email
     })
     await auth.authorize()
     health.auth.ok = true

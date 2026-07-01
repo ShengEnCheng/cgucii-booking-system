@@ -39,7 +39,7 @@ const Home: NextPage = () => {
   })
 
   useEffect(() => {
-    fetch('/api/admin/config')
+    fetch('/api/public-config')
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
         if (!data) return

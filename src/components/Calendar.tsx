@@ -41,7 +41,7 @@ const Calendar = memo(function Calendar({ selectedSpaceId, onDateClick }: Calend
   }, []);
 
   useEffect(() => {
-    fetch('/api/admin/config')
+    fetch('/api/public-config')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data) setConfig({ spaceOverrides: data.spaceOverrides || {}, disabledSpaceIds: data.disabledSpaceIds || [] });

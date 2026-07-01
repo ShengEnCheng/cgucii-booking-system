@@ -59,55 +59,23 @@ export default async function handler(
       privateKey = privateKey.replace(/\\n/g, '\n');
     }
 
-    // 嘗試使用原始的 private_key
-    try {
-      // 創建 JWT 客戶端
-      const auth = new JWT({
-        email: credentials.client_email,
-        key: credentials.private_key,
-        scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
-        subject: credentials.client_email,
-      });
-
-      // 測試認證
-      await auth.authorize();
-      console.log('Authentication successful with original private key');
-
-      // 繼續使用原始的 private_key
-      privateKey = credentials.private_key;
-    } catch (authError) {
-      console.error('Error with original private key, trying processed key:', authError);
-
-      // 確保私鑰是正確的格式
-      if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----')) {
-        privateKey = `-----BEGIN PRIVATE KEY-----\n${privateKey.replace(/-----BEGIN PRIVATE KEY-----/g, '')}`;
-      }
-      if (!privateKey.endsWith('-----END PRIVATE KEY-----')) {
-        privateKey = `${privateKey.replace(/-----END PRIVATE KEY-----/g, '')}\n-----END PRIVATE KEY-----`;
-      }
-    }
-
-    console.log('Private key length after processing:', privateKey.length);
-    console.log('Private key starts with correct header:', privateKey.startsWith('-----BEGIN PRIVATE KEY-----'));
-    console.log('Private key ends with correct footer:', privateKey.endsWith('-----END PRIVATE KEY-----'));
-
-    // 創建 JWT 客戶端
-    let auth;
+    // 建立 JWT 客戶端
+    // 注意：這裡故意不設定 subject。subject 是拿來做 Google Workspace
+    // 網域授權（domain-wide delegation）模擬「特定使用者」身份用的，
+    // 這個專案只是把日曆直接共用給服務帳戶（見 GOOGLE_CALENDAR_SETUP.md），
+    // 沒有、也不需要設定網域授權；多帶 subject 反而會被 Google 判定
+    // 「invalid_grant: Invalid JWT Signature」而整個認證失敗。
+    let auth: JWT;
     try {
       auth = new JWT({
         email: credentials.client_email,
         key: privateKey,
         scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
-        subject: credentials.client_email,
-        keyId: credentials.private_key_id,
-        projectId: credentials.project_id
       });
-
-      // 測試認證
       await auth.authorize();
-      console.log('Authentication successful with JWT client');
+      console.log('Google Calendar 認證成功');
     } catch (authError) {
-      console.error('Error creating JWT client:', authError);
+      console.error('Google API 認證失敗:', authError);
       return res.status(500).json({
         error: 'Google API 認證失敗',
         details: authError instanceof Error ? authError.message : '未知認證錯誤'

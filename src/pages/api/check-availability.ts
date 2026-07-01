@@ -1,6 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { checkSpaceAvailability } from '@/utils/availabilityUtils'
 
+// 公開端點：預約表單即時檢查時段是否可用，一般使用者/廠商填表單時會用到，
+// 不能加密碼保護（先前誤放在 /api/admin/ 底下，導致公開預約頁被擋）。
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
