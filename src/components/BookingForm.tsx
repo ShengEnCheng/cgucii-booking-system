@@ -63,7 +63,7 @@ const BookingForm = memo(function BookingForm({ space, onClose }: BookingFormPro
       endTime: formData.endTime,
     })
 
-    fetch(`/api/admin/check-availability?${params}`)
+    fetch(`/api/check-availability?${params}`)
       .then(r => r.json())
       .then(data => setIsAvailable(!!data.available))
       .catch(() => setIsAvailable(null))

@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { google } from 'googleapis';
 import { JWT } from 'google-auth-library';
+import { readAppConfig } from '@/utils/appConfig';
 
 interface GoogleCredentials {
   type: string;
@@ -53,17 +54,10 @@ export default async function handler(
     } = req.body;
 
     // ── 1. 禁用場地檢查 ──────────────────────────────────────────────────
+    let appConfig = await readAppConfig();
     try {
-      const fs = await import('fs');
-      const path = await import('path');
-      const p = path.join(process.cwd(), 'src', 'config', 'app-config.json');
-      let disabledNames = new Set<string>();
-      let disabledIds = new Set<string>();
-      try {
-        const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
-        if (Array.isArray(cfg.disabledSpaceNames)) disabledNames = new Set(cfg.disabledSpaceNames.map(String));
-        if (Array.isArray(cfg.disabledSpaceIds))   disabledIds   = new Set(cfg.disabledSpaceIds.map(String));
-      } catch {}
+      const disabledNames = new Set((appConfig.disabledSpaceNames || []).map(String));
+      const disabledIds = new Set((appConfig.disabledSpaceIds || []).map(String));
       if (disabledNames.has(spaceName)) return res.status(403).json({ error: '此空間暫停預約' });
       try {
         const { spaces } = await import('@/data/spaces');
@@ -82,20 +76,13 @@ export default async function handler(
       email: credentials.client_email,
       key: privateKey,
       scopes: ['https://www.googleapis.com/auth/calendar'],
-      subject: credentials.client_email,
-      keyId: credentials.private_key_id,
     });
 
-    // ── 3. Calendar ID（env var 優先，回落到 app-config.json）────────────
+    // ── 3. Calendar ID（env var 優先，回落到後台設定）────────────────────
     let calendarId: string | undefined = process.env.CALENDAR_ID;
-    try {
-      const fs = await import('fs');
-      const path = await import('path');
-      const cfg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'src', 'config', 'app-config.json'), 'utf8'));
-      if (cfg.googleCalendarId && typeof cfg.googleCalendarId === 'string' && cfg.googleCalendarId.trim()) {
-        calendarId = cfg.googleCalendarId.trim();
-      }
-    } catch {}
+    if (appConfig.googleCalendarId && typeof appConfig.googleCalendarId === 'string' && appConfig.googleCalendarId.trim()) {
+      calendarId = appConfig.googleCalendarId.trim();
+    }
     if (!calendarId) return res.status(500).json({ error: 'Calendar ID is missing' });
 
     const calendar = google.calendar({ version: 'v3', auth });
