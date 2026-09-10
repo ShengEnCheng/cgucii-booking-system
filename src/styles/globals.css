@@ -3,137 +3,219 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-tap-highlight-color: transparent;
+  }
   body {
-    @apply antialiased;
+    @apply antialiased text-slate-800 bg-slate-100;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "PingFang TC", "Microsoft JhengHei", sans-serif;
   }
 }
 
+/* 現代化滾動條樣式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.7);
+}
+
 @layer components {
-  .fc-daygrid-event .fc-event-main {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    white-space: normal;
-    line-height: 1.25;
-    word-break: break-word;
+  /* ── FullCalendar 核心現代化覆寫 ── */
+  .fc {
+    --fc-border-color: #f1f5f9;
+    --fc-page-bg-color: #ffffff;
+    --fc-neutral-bg-color: #f8fafc;
+    --fc-today-bg-color: #eff6ff;
+    font-family: inherit;
   }
-  .fc-daygrid-event {
-    padding: 2px 4px;
+
+  /* 頂部工具列 */
+  .fc .fc-toolbar {
+    margin-bottom: 1.25rem !important;
+    gap: 0.75rem;
+    flex-wrap: wrap;
   }
-  .fc-daygrid-event,
-  .fc-timegrid-event {
-    border: 1px solid rgba(0,0,0,.08);
-    border-radius: 8px;
+
+  .fc .fc-toolbar-title {
+    font-size: 1.25rem !important;
+    font-weight: 700 !important;
+    color: #0f172a !important;
+    letter-spacing: -0.025em;
   }
-  .fc-event-main .ev-title {
+
+  /* 頂部按鈕美化 */
+  .fc .fc-button {
+    padding: 0.45rem 0.85rem !important;
+    font-size: 0.8125rem !important;
+    font-weight: 600 !important;
+    border-radius: 0.5rem !important;
+    border: 1px solid #e2e8f0 !important;
+    background-color: #ffffff !important;
+    color: #475569 !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+    transition: all 0.15s ease-in-out !important;
+  }
+
+  .fc .fc-button:hover {
+    background-color: #f8fafc !important;
+    border-color: #cbd5e1 !important;
+    color: #1e293b !important;
+  }
+
+  .fc .fc-button-primary:not(:disabled).fc-button-active,
+  .fc .fc-button-primary:not(:disabled):active {
+    background-color: #2563eb !important;
+    border-color: #2563eb !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 4px 0 rgba(37, 99, 235, 0.25) !important;
+  }
+
+  .fc .fc-button-primary:disabled {
+    opacity: 0.5 !important;
+  }
+
+  .fc .fc-today-button {
+    font-weight: 700 !important;
+    border-color: #bfdbfe !important;
+    color: #2563eb !important;
+    background-color: #eff6ff !important;
+  }
+
+  /* 星期欄表頭 */
+  .fc .fc-col-header-cell {
+    background: #f8fafc;
+    padding: 0.65rem 0;
+    border-color: #e2e8f0 !important;
+  }
+
+  .fc .fc-col-header-cell-cushion {
+    color: #64748b;
+    font-size: 0.8125rem;
     font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.35rem 0 !important;
   }
+
+  /* 日期數字 */
+  .fc .fc-daygrid-day-top {
+    flex-direction: row;
+    padding: 0.4rem 0.5rem 0.25rem 0.5rem;
+  }
+
+  .fc .fc-daygrid-day-number {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #475569;
+    padding: 0.25rem 0.45rem;
+    border-radius: 9999px;
+    min-width: 1.75rem;
+    text-align: center;
+    transition: all 0.15s;
+  }
+
+  /* 今天日期高亮徽章 */
+  .fc .fc-day-today .fc-daygrid-day-number {
+    background-color: #2563eb;
+    color: #ffffff !important;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
+  }
+
+  /* 格子懸停互動提示 */
+  .fc-theme-standard td.fc-day:hover {
+    background-color: rgba(241, 245, 249, 0.6);
+    cursor: pointer;
+  }
+
+  /* ── 事件卡片樣式 ── */
+  .fc-daygrid-event {
+    margin: 2px 3px 3px 3px !important;
+    border-radius: 6px !important;
+    border: none !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08) !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+    overflow: hidden;
+  }
+
+  .fc-daygrid-event:hover {
+    transform: translateY(-1px) scale(1.01);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.12), 0 2px 4px -2px rgba(0, 0, 0, 0.1) !important;
+    z-index: 15 !important;
+  }
+
+  .fc-daygrid-event .fc-event-main {
+    padding: 3px 6px !important;
+    line-height: 1.3;
+  }
+
+  .fc-event-main .ev-title {
+    font-size: 0.8125rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fc-event-main .ev-time-line {
+    font-size: 0.725rem;
+    font-weight: 600;
+    opacity: 0.92;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fc-event-main .ev-subtitle {
+    font-size: 0.725rem;
+    opacity: 0.88;
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .fc-event-main .ev-meta {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
     align-items: center;
-    color: #374151;
-    font-size: 12px;
-  }
-  .fc-event-main .ev-subtitle {
-    color: #4b5563;
-    font-size: 13px;
-    line-height: 1.3;
-  }
-  .fc-event-main .ev-time-line {
-    color: #111827;
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.3;
     margin-top: 2px;
   }
-  .fc-event-main .ev-time {
-    display: inline-block;
-    font-weight: 700;
-    font-size: 13px;
-    line-height: 1.3;
-    background: #fff;
-    border: 1px solid rgba(0,0,0,.12);
-    border-radius: 6px;
-    padding: 2px 6px;
-    margin-bottom: 2px;
-  }
+
   .ev-badge {
-    background: rgba(255,255,255,.85);
-    border: 1px solid rgba(0,0,0,.06);
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 9999px;
-    padding: 2px 6px;
-    line-height: 1.2;
+    padding: 1px 6px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1.25;
     font-variant-numeric: tabular-nums;
+    color: #1e293b;
   }
-  .fc-daygrid-day .fc-daygrid-event {
-    max-width: 100%;
-  }
-  .fc-daygrid-day .fc-event-main {
-    overflow: hidden;
-  }
-  .fc-daygrid-day .ev-title {
-    white-space: normal;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .fc-daygrid-day .ev-meta {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
+
+  /* 傳統通用按鈕與表單元素美化 */
   .btn-primary {
-    @apply bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors font-medium;
+    @apply bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 px-5 rounded-xl hover:from-blue-700 hover:to-indigo-700 active:scale-[0.99] focus:ring-4 focus:ring-blue-500/25 transition-all font-semibold shadow-md shadow-blue-500/20;
   }
   
   .input-field {
-    @apply w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors;
+    @apply w-full border border-slate-200 rounded-xl p-3 text-slate-800 bg-slate-50/60 focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 transition-all placeholder-slate-400 text-sm;
   }
   
   .form-label {
-    @apply block mb-2 font-medium text-gray-700;
-  }
-
-  
-  /* 移動端優化樣式 */
-  @media (max-width: 768px) {
-    .input-field {
-      @apply text-base min-h-[44px] p-4;
-      /* 防止iOS縮放，確保觸控友好 */
-    }
-    
-    .btn-primary {
-      @apply min-h-[44px] text-base py-4;
-      /* 符合觸控標準的按鈕高度 */
-    }
-    
-    .form-label {
-      @apply text-sm mb-1;
-      /* 移動端較小的標籤間距 */
-    }
-    
-    .booking-form {
-      @apply p-4 space-y-4;
-      /* 移動端表單容器優化 */
-    }
-    
-    .form-grid {
-      @apply grid-cols-1 gap-4;
-      /* 移動端單列布局 */
-    }
-    
-    .time-grid {
-      @apply grid-cols-1 gap-3;
-      /* 移動端時間選擇器單列 */
-    }
-  }
-  
-  /* 平板端優化 */
-  @media (min-width: 769px) and (max-width: 1024px) {
-    .form-grid {
-      @apply grid-cols-1 gap-5;
-      /* 平板端適中布局 */
-    }
+    @apply block mb-1.5 text-xs font-bold text-slate-600 uppercase tracking-wider;
   }
 }

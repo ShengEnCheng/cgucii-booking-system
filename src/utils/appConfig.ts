@@ -21,7 +21,7 @@ export type AppConfig = {
 }
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
-  logoPath: '/images/logo.png',
+  logoPath: '/images/my-logo.svg',
   disabledSpaceIds: [],
   disabledSpaceNames: [],
   spaceOverrides: {},
