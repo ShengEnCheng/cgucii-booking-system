@@ -1,4 +1,4 @@
-import type { NextPage } from 'next'
+import type { NextPage, GetServerSideProps } from 'next'
 import Head from 'next/head'
 import Link from 'next/link'
 import { useState, useEffect, useCallback } from 'react'
@@ -8,6 +8,7 @@ import Image from 'next/image'
 import { Space } from '@/types'
 import Calendar from '@/components/Calendar'
 import { Toaster } from 'react-hot-toast'
+import { readAppConfig } from '@/utils/appConfig'
 
 // Google Calendar 顏色對照
 const SPACE_COLORS: Record<string, string> = {
@@ -21,7 +22,29 @@ function getAccentColor(colorId?: string): string {
   return SPACE_COLORS[colorId || ''] || '#2563eb'
 }
 
-const Home: NextPage = () => {
+interface AppConfigState {
+  logoPath: string
+  disabledSpaceIds: string[]
+  disabledSpaceNames: string[]
+  spaceOverrides: Record<string, { name?: string; image?: string }>
+  hideDisabled: boolean
+  formFields?: Record<string, { show?: boolean; required?: boolean; label?: string }>
+}
+
+interface IndexProps {
+  initialConfig?: AppConfigState
+}
+
+const DEFAULT_CONFIG: AppConfigState = {
+  logoPath: '/images/my-logo.svg',
+  disabledSpaceIds: ['2', '1', '5'],
+  disabledSpaceNames: ['共創空間', '創新發想基地', 'DEMO ROOM'],
+  spaceOverrides: { '3': { name: 'C01會議室' }, '4': { name: 'C02會議室' } },
+  hideDisabled: true,
+  formFields: {},
+}
+
+const Home: NextPage<IndexProps> = ({ initialConfig }) => {
   // 行事曆篩選用的 active space
   const [activeSpaceId, setActiveSpaceId] = useState<string | undefined>(undefined)
   // 預約 modal 的目標場地
@@ -29,21 +52,7 @@ const Home: NextPage = () => {
   // 點選行事曆日期時預填的日期
   const [selectedDate, setSelectedDate] = useState<string | undefined>(undefined)
 
-  const [config, setConfig] = useState<{
-    logoPath: string
-    disabledSpaceIds: string[]
-    disabledSpaceNames: string[]
-    spaceOverrides: Record<string, { name?: string; image?: string }>
-    hideDisabled: boolean
-    formFields?: Record<string, { show?: boolean; required?: boolean; label?: string }>
-  }>({
-    logoPath: process.env.NEXT_PUBLIC_LOGO_PATH || '/images/my-logo.svg',
-    disabledSpaceIds: [],
-    disabledSpaceNames: [],
-    spaceOverrides: {},
-    hideDisabled: false,
-    formFields: {},
-  })
+  const [config, setConfig] = useState(initialConfig || DEFAULT_CONFIG)
 
   useEffect(() => {
     fetch('/api/public-config')
@@ -52,10 +61,10 @@ const Home: NextPage = () => {
         if (!data) return
         setConfig({
           logoPath: typeof data.logoPath === 'string' && data.logoPath ? data.logoPath : '/images/my-logo.svg',
-          disabledSpaceIds: Array.isArray(data.disabledSpaceIds) ? data.disabledSpaceIds.map(String) : [],
-          disabledSpaceNames: Array.isArray(data.disabledSpaceNames) ? data.disabledSpaceNames.map(String) : [],
-          spaceOverrides: typeof data.spaceOverrides === 'object' ? data.spaceOverrides : {},
-          hideDisabled: !!data.hideDisabled,
+          disabledSpaceIds: Array.isArray(data.disabledSpaceIds) ? data.disabledSpaceIds.map(String) : ['2', '1', '5'],
+          disabledSpaceNames: Array.isArray(data.disabledSpaceNames) ? data.disabledSpaceNames.map(String) : ['共創空間', '創新發想基地', 'DEMO ROOM'],
+          spaceOverrides: typeof data.spaceOverrides === 'object' ? data.spaceOverrides : { '3': { name: 'C01會議室' }, '4': { name: 'C02會議室' } },
+          hideDisabled: data.hideDisabled !== undefined ? !!data.hideDisabled : true,
           formFields: typeof data.formFields === 'object' ? data.formFields : {},
         })
       })
@@ -551,6 +560,30 @@ const Home: NextPage = () => {
       )}
     </>
   )
+}
+
+export const getServerSideProps: GetServerSideProps = async () => {
+  try {
+    const raw = await readAppConfig()
+    return {
+      props: {
+        initialConfig: {
+          logoPath: typeof raw.logoPath === 'string' && raw.logoPath ? raw.logoPath : '/images/my-logo.svg',
+          disabledSpaceIds: Array.isArray(raw.disabledSpaceIds) ? raw.disabledSpaceIds.map(String) : ['2', '1', '5'],
+          disabledSpaceNames: Array.isArray(raw.disabledSpaceNames) ? raw.disabledSpaceNames.map(String) : ['共創空間', '創新發想基地', 'DEMO ROOM'],
+          spaceOverrides: typeof raw.spaceOverrides === 'object' ? raw.spaceOverrides : { '3': { name: 'C01會議室' }, '4': { name: 'C02會議室' } },
+          hideDisabled: raw.hideDisabled !== undefined ? !!raw.hideDisabled : true,
+          formFields: typeof raw.formFields === 'object' ? raw.formFields : {},
+        },
+      },
+    }
+  } catch {
+    return {
+      props: {
+        initialConfig: DEFAULT_CONFIG,
+      },
+    }
+  }
 }
 
 export default Home
