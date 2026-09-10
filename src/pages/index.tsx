@@ -170,35 +170,13 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
               </div>
             </div>
 
-            {/* 右側：狀態徽章與後台按鈕 */}
-            <div className="flex items-center gap-3 flex-shrink-0">
-              {/* 系統即時連線標籤（手機上隱藏文字保持清爽）*/}
-              <div className="flex items-center gap-2 bg-white/10 hover:bg-white/15 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/15 text-xs text-white/90 shadow-sm transition-colors">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
-                </span>
-                <span className="hidden md:inline font-medium">Google 日曆即時連線</span>
-                <span className="md:hidden font-medium">連線中</span>
-              </div>
-
-              {/* 管理員後台連結 */}
-              <Link
-                href="/admin"
-                className="flex items-center gap-1.5 text-xs font-semibold text-white bg-white/15 hover:bg-white/25 active:bg-white/30 border border-white/25 backdrop-blur-md px-3.5 py-1.5 rounded-full transition-all shadow-sm hover:shadow"
-                title="前往後台管理系統"
-              >
-                <svg className="w-3.5 h-3.5 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                  />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <span>後台管理</span>
-              </Link>
+            {/* 右側：狀態徽章 */}
+            <div className="flex items-center gap-2 bg-white/10 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/15 text-xs text-white/90 shadow-sm flex-shrink-0">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+              </span>
+              <span className="font-medium">Google 日曆即時連線</span>
             </div>
           </div>
 
