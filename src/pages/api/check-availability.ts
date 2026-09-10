@@ -1,35 +1,44 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
+import { readAppConfig } from '@/utils/appConfig'
 import { checkSpaceAvailability } from '@/utils/availabilityUtils'
+import { fetchRawCalendarEvents } from '@/utils/googleCalendarService'
 
-// 公開端點：預約表單即時檢查時段是否可用，一般使用者/廠商填表單時會用到，
-// 不能加密碼保護（先前誤放在 /api/admin/ 底下，導致公開預約頁被擋）。
+// 公開端點：預約表單即時檢查時段是否可用，使用者填表單時即時呼叫
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
+
   const { spaceName, date, startTime, endTime } = req.query as Record<string, string>
   if (!spaceName || !date || !startTime || !endTime) {
     return res.status(400).json({ error: '缺少必要參數 spaceName/date/startTime/endTime' })
   }
+
   try {
-    const startISO = `${date}T00:00:00+08:00`
-    const endISO = `${date}T23:59:59+08:00`
-    // 注意：不能用 NEXT_PUBLIC_BASE_URL || http://localhost:3000 當作內部呼叫的網址。
-    // Vercel 這類 serverless 平台上根本沒有「localhost:3000」可以連，
-    // 這會導致這支 API 在正式環境永遠 fetch failed，
-    // 進而讓 BookingForm 誤判「所有時段都已被預約」。改用當次請求本身的
-    // host/協定組出正確的網址，本機開發、Vercel 正式環境都適用。
-    const proto = (req.headers['x-forwarded-proto'] as string) || 'http'
-    const host = req.headers.host
-    const base = `${proto}://${host}`
-    const r = await fetch(`${base}/api/calendar-events?start=${encodeURIComponent(startISO)}&end=${encodeURIComponent(endISO)}&t=${Date.now()}`)
-    if (!r.ok) {
-      return res.status(500).json({ error: '取得事件失敗' })
-    }
-    const events = await r.json()
-    const available = checkSpaceAvailability(events, spaceName, date, startTime, endTime)
+    const appConfig = await readAppConfig()
+
+    // 直接查詢當天的 Google Calendar 事件，不再發動自我循環 HTTP fetch
+    const timeMin = new Date(`${date}T00:00:00+08:00`).toISOString()
+    const timeMax = new Date(`${date}T23:59:59+08:00`).toISOString()
+
+    const rawEvents = await fetchRawCalendarEvents({
+      timeMin,
+      timeMax,
+    })
+
+    const available = checkSpaceAvailability(
+      rawEvents,
+      spaceName,
+      date,
+      startTime,
+      endTime,
+      appConfig.spaceOverrides
+    )
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
     return res.status(200).json({ available })
   } catch (e: any) {
+    console.error('查詢可用性失敗:', e)
     return res.status(500).json({ error: e?.message || '未知錯誤' })
   }
 }

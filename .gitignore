@@ -35,4 +35,9 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
-*.swo 
+*.swo
+.claude/
+
+# 編譯快取
+*.tsbuildinfo
+tsconfig.tsbuildinfo

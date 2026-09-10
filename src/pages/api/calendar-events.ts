@@ -1,258 +1,127 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { google } from 'googleapis';
-import { JWT } from 'google-auth-library';
-
-interface GoogleCredentials {
-  type: string;
-  project_id: string;
-  private_key_id: string;
-  private_key: string;
-  client_email: string;
-  client_id: string;
-  auth_uri: string;
-  token_uri: string;
-  auth_provider_x509_cert_url: string;
-  client_x509_cert_url: string;
-}
+import type { NextApiRequest, NextApiResponse } from 'next'
+import { readAppConfig } from '@/utils/appConfig'
+import {
+  fetchRawCalendarEvents,
+  getColorHex,
+  getEffectiveCalendarId,
+} from '@/utils/googleCalendarService'
+import { spaces } from '@/data/spaces'
+import { getSpaceKeywords, isEventForSpace } from '@/utils/availabilityUtils'
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ error: 'Method not allowed' })
   }
 
   try {
-    // 解析 Google 憑證
-    console.log('GOOGLE_CREDENTIALS available:', !!process.env.GOOGLE_CREDENTIALS);
+    // 讀取後台設定（正式環境自 Vercel KV 讀取，本機自 app-config.json）
+    const appConfig = await readAppConfig()
 
-    let credentials;
-    try {
-      credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS || '{}') as GoogleCredentials;
-      console.log('Credentials parsed successfully');
-    } catch (parseError) {
-      console.error('Error parsing Google credentials:', parseError);
-      return res.status(500).json({
-        error: 'Error parsing Google credentials',
-        details: parseError instanceof Error ? parseError.message : 'Unknown parsing error'
-      });
-    }
+    // 取得時間範圍（同時支援 start/end 與 timeMin/timeMax）
+    const { start, end, timeMin: qTimeMin, timeMax: qTimeMax } = req.query as Record<
+      string,
+      string | string[] | undefined
+    >
+    const rawMin =
+      (Array.isArray(qTimeMin) ? qTimeMin[0] : qTimeMin) ||
+      (Array.isArray(start) ? start[0] : start)
+    const rawMax =
+      (Array.isArray(qTimeMax) ? qTimeMax[0] : qTimeMax) ||
+      (Array.isArray(end) ? end[0] : end)
 
-    if (!credentials.client_email || !credentials.private_key) {
-      console.error('Google credentials are missing or invalid');
-      return res.status(500).json({
-        error: 'Google credentials are missing or invalid',
-        credentialsCheck: {
-          hasClientEmail: !!credentials.client_email,
-          hasPrivateKey: !!credentials.private_key
-        }
-      });
-    }
+    const timeMin = rawMin
+      ? new Date(rawMin).toISOString()
+      : new Date(new Date().setDate(1)).toISOString()
+    const timeMax = rawMax
+      ? new Date(rawMax).toISOString()
+      : new Date(
+          new Date(new Date().setMonth(new Date().getMonth() + 1)).setDate(0)
+        ).toISOString()
 
-    // 確保 private_key 中的換行符正確
-    console.log('Private key length before processing:', credentials.private_key.length);
+    // 決定 Calendar ID（後台自訂優先，回落至環境變數）
+    const calendarId =
+      (appConfig.googleCalendarId && appConfig.googleCalendarId.trim()) ||
+      (await getEffectiveCalendarId())
 
-    // 先將所有 \n 替換為真正的換行符
-    let privateKey = credentials.private_key;
-    if (privateKey.includes('\\n')) {
-      privateKey = privateKey.replace(/\\n/g, '\n');
-    }
-
-    // 建立 JWT 客戶端
-    // 注意：這裡故意不設定 subject。subject 是拿來做 Google Workspace
-    // 網域授權（domain-wide delegation）模擬「特定使用者」身份用的，
-    // 這個專案只是把日曆直接共用給服務帳戶（見 GOOGLE_CALENDAR_SETUP.md），
-    // 沒有、也不需要設定網域授權；多帶 subject 反而會被 Google 判定
-    // 「invalid_grant: Invalid JWT Signature」而整個認證失敗。
-    let auth: JWT;
-    try {
-      auth = new JWT({
-        email: credentials.client_email,
-        key: privateKey,
-        scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
-      });
-      await auth.authorize();
-      console.log('Google Calendar 認證成功');
-    } catch (authError) {
-      console.error('Google API 認證失敗:', authError);
-      return res.status(500).json({
-        error: 'Google API 認證失敗',
-        details: authError instanceof Error ? authError.message : '未知認證錯誤'
-      });
-    }
-
-    // 獲取日曆 ID
-    console.log('Checking for CALENDAR_ID');
-    let calendarId = process.env.CALENDAR_ID;
-    console.log('CALENDAR_ID available:', !!calendarId);
-    try {
-      const fs = await import('fs')
-      const path = await import('path')
-      const p = path.join(process.cwd(), 'src', 'config', 'app-config.json')
-      try {
-        const raw = fs.readFileSync(p, 'utf8')
-        const cfg = JSON.parse(raw)
-        if (cfg.googleCalendarId && typeof cfg.googleCalendarId === 'string' && cfg.googleCalendarId.trim()) {
-          calendarId = cfg.googleCalendarId.trim()
-        }
-      } catch {}
-    } catch {}
-    if (!calendarId) {
-      console.error('Calendar ID is missing')
-      return res.status(500).json({ error: 'Calendar ID is missing' })
-    }
-
-    // 獲取時間範圍（同時支援 start/end 與 timeMin/timeMax）
-    const { start, end, timeMin: qTimeMin, timeMax: qTimeMax } = req.query as Record<string, string | string[] | undefined>;
-    const rawMin = (Array.isArray(qTimeMin) ? qTimeMin[0] : qTimeMin) || (Array.isArray(start) ? start[0] : start);
-    const rawMax = (Array.isArray(qTimeMax) ? qTimeMax[0] : qTimeMax) || (Array.isArray(end) ? end[0] : end);
-    const timeMin = rawMin ? new Date(rawMin).toISOString() : new Date(new Date().setDate(1)).toISOString();
-    const timeMax = rawMax ? new Date(rawMax).toISOString() : new Date(new Date(new Date().setMonth(new Date().getMonth() + 1)).setDate(0)).toISOString();
-
-    console.log('準備獲取行事曆事件:', {
+    // 抓取日曆原始事件
+    const rawEvents = await fetchRawCalendarEvents({
       calendarId,
       timeMin,
       timeMax,
-      clientEmail: credentials.client_email
-    });
+    })
 
-    // 創建日曆 API 客戶端
-    const calendar = google.calendar({ version: 'v3', auth });
-
-    // 獲取事件
-    const response = await calendar.events.list({
-      calendarId,
-      timeMin,
-      timeMax,
-      singleEvents: true,
-      orderBy: 'startTime',
-    });
-
-    let events = response.data.items?.map(event => ({
-      id: event.id,
+    // 轉換為前端標準事件物件
+    let events = rawEvents.map((event) => ({
+      id: event.id || '',
       title: event.summary || '無標題',
-      start: event.start?.dateTime || event.start?.date,
-      end: event.end?.dateTime || event.end?.date,
+      start: event.start?.dateTime || event.start?.date || '',
+      end: event.end?.dateTime || event.end?.date || '',
       color: getColorHex(event.colorId || undefined),
       description: event.description || '',
       location: event.location || '',
-    })) || [];
+    }))
 
-    try {
-      const fs = await import('fs')
-      const path = await import('path')
-      const p = path.join(process.cwd(), 'src', 'config', 'app-config.json')
-      let filters: any = {}
-      let overrides: Record<string, { name?: string }> = {}
-      let useGoogleColors = true
-      try {
-        const raw = fs.readFileSync(p, 'utf8')
-        const cfg = JSON.parse(raw)
-        filters = cfg.eventFilters || {}
-        overrides = cfg.spaceOverrides || {}
-        useGoogleColors = typeof cfg.useGoogleColors === 'boolean' ? cfg.useGoogleColors : true
-      } catch {}
-      const names: string[] = require('@/data/spaces').spaces.map((s: any) => {
-        const o = overrides[s.id] || {}
-        const base = [s.name, o.name].filter(Boolean)
-        const aliases: string[] = []
-        if (s.id === '3') {
-          aliases.push('C01', 'C01會議室')
+    // 套用過濾規則與別名篩選
+    const filters = appConfig.eventFilters || {}
+    const overrides = appConfig.spaceOverrides || {}
+    const useGoogleColors =
+      typeof appConfig.useGoogleColors === 'boolean' ? appConfig.useGoogleColors : true
+
+    // 收集所有已知空間的所有關鍵字
+    const allSpaceKeywords = spaces.flatMap((s) =>
+      getSpaceKeywords(s.id, overrides)
+    )
+
+    const allow = Array.isArray(filters.allowKeywords)
+      ? filters.allowKeywords.map((k) => String(k).toLowerCase().trim()).filter(Boolean)
+      : []
+    const ignore = Array.isArray(filters.ignoreKeywords)
+      ? filters.ignoreKeywords.map((k) => String(k).toLowerCase().trim()).filter(Boolean)
+      : []
+    const spacesOnly = !!filters.spacesOnly
+
+    events = events.filter((ev) => {
+      const t = String(ev.title || '').toLowerCase()
+      // 1. 若符合忽略關鍵字，排除
+      if (ignore.some((k) => t.includes(k))) return false
+      // 2. 若有設定允許關鍵字且符合，直接保留
+      if (allow.length > 0 && allow.some((k) => t.includes(k))) return true
+      // 3. 若開啟「僅顯示空間相關事件」，檢查是否匹配任何空間
+      if (spacesOnly) {
+        return allSpaceKeywords.some((k) => t.includes(k))
+      }
+      return true
+    })
+
+    // 若設定不沿用 Google 顏色，使用專案預設配色（C01番茄紅、C02香蕉黃等）
+    if (!useGoogleColors) {
+      const c01Keywords = getSpaceKeywords('3', overrides)
+      const c02Keywords = getSpaceKeywords('4', overrides)
+      events = events.map((ev) => {
+        if (isEventForSpace(ev, c01Keywords)) {
+          return { ...ev, color: '#D60000' }
         }
-        if (s.id === '4') {
-          aliases.push('C02', 'C02會議室', '中型C02會議室')
+        if (isEventForSpace(ev, c02Keywords)) {
+          return { ...ev, color: '#F6C026' }
         }
-        return base.concat(aliases)
-      }).flat().map((n: any) => String(n).toLowerCase())
-      const allow: string[] = Array.isArray(filters.allowKeywords) ? (filters.allowKeywords as any[]).map((kw: any) => String(kw).toLowerCase()) : []
-      const ignore: string[] = Array.isArray(filters.ignoreKeywords) ? (filters.ignoreKeywords as any[]).map((kw: any) => String(kw).toLowerCase()) : []
-      const spacesOnly = !!filters.spacesOnly
-      events = events.filter(ev => {
-        const t = String(ev.title || '').toLowerCase()
-        if (ignore.some(k => t.includes(k))) return false
-        if (allow.length > 0 && allow.some(k => t.includes(k))) return true
-        if (spacesOnly) return names.some(n => t.includes(n))
-        return true
+        return ev
       })
-      if (!useGoogleColors) {
-        events = events.map(ev => {
-          const t = String(ev.title || '').toLowerCase()
-          if (t.includes('c01') || t.includes('c01會議室')) {
-            return { ...ev, color: '#D60000' }
-          }
-          if (t.includes('c02') || t.includes('c02會議室') || t.includes('中型c02會議室')) {
-            return { ...ev, color: '#F6C026' }
-          }
-          return ev
-        })
-      }
-    } catch {}
-
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    
-    return res.status(200).json(events);
-  } catch (error) {
-    console.error('獲取行事曆事件失敗:', error);
-
-    // 更詳細的錯誤信息
-    let errorDetails = '未知錯誤';
-    let errorCode = '';
-
-    if (error instanceof Error) {
-      errorDetails = error.message;
-      // @ts-ignore
-      if (error.code) {
-        // @ts-ignore
-        errorCode = error.code;
-      }
-
-      // 如果是 Google API 錯誤，可能有更多信息
-      // @ts-ignore
-      if (error.errors && Array.isArray(error.errors)) {
-        // @ts-ignore
-        errorDetails = error.errors.map(e => e.message).join(', ');
-      }
     }
 
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+    res.setHeader('Pragma', 'no-cache')
+    res.setHeader('Expires', '0')
+
+    return res.status(200).json(events)
+  } catch (error: any) {
+    console.error('獲取行事曆事件失敗:', error)
     return res.status(500).json({
       error: '獲取行事曆事件失敗',
-      details: errorDetails,
-      code: errorCode,
-      stack: process.env.NODE_ENV !== 'production' ? (error instanceof Error ? error.stack : '') : undefined
-    });
+      details: error?.message || '未知錯誤',
+      code: error?.code || '',
+    })
   }
-}
-
-// 將 Google Calendar 顏色 ID 轉換為十六進制顏色代碼
-function getColorHex(colorId: string | undefined): string {
-  const colorMap: { [key: string]: string } = {
-    '1': '#7986CB', // 薰衣草
-    '2': '#33B679', // 鼠尾草
-    '3': '#8E24AA', // 葡萄
-    '4': '#E67C73', // 紅
-    '5': '#F6C026', // 香蕉
-    '6': '#F5511D', // 南瓜
-    '7': '#039BE5', // 孔雀
-    '8': '#616161', // 石墨
-    '9': '#3F51B5', // 藍莓
-    '10': '#0B8043', // 羅勒
-    '11': '#D60000', // 番茄
-    '12': '#E91E63', // 火烈鳥
-    '13': '#F57F17', // 芒果
-    '14': '#7CB342', // 鱷梨
-    '15': '#1DE9B6', // 薄荷
-    '16': '#FF1744', // 櫻桃
-    '17': '#D500F9', // 葡萄柚
-    '18': '#FFD600', // 香蕉
-    '19': '#00C853', // 羅勒
-    '20': '#FF3D00', // 番茄
-    '21': '#304FFE', // 藍莓
-    '22': '#00BFA5', // 薄荷
-    '23': '#FF1744', // 櫻桃
-    '24': '#D500F9', // 葡萄柚
-  };
-  return colorMap[colorId || '1'] || '#7986CB';
 }
