@@ -418,7 +418,7 @@ const Home: NextPage<IndexProps> = ({ initialConfig, configDegraded }) => {
           {/* 右欄：行事曆 */}
           <main className="flex-1 flex flex-col md:overflow-hidden bg-slate-50/50 min-w-0">
             <div className="px-4 sm:px-6 py-3 border-b border-slate-200/80 bg-white flex flex-wrap items-center justify-between gap-3 flex-shrink-0 shadow-sm z-10">
-              <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+              <div className="-mx-1 flex w-full items-center gap-2 overflow-x-auto px-1 pb-1 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1 hidden sm:inline">
                   場地檢視：
                 </span>
@@ -427,7 +427,7 @@ const Home: NextPage<IndexProps> = ({ initialConfig, configDegraded }) => {
                   type="button"
                   onClick={() => setActiveSpaceId(undefined)}
                   aria-pressed={activeSpaceId === undefined}
-                  className={`text-xs px-3 py-1 rounded-full font-semibold transition-all ${
+                  className={`flex-shrink-0 text-xs px-3 py-1 rounded-full font-semibold transition-all ${
                     activeSpaceId === undefined
                       ? 'bg-slate-800 text-white shadow-sm'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800'
@@ -461,7 +461,7 @@ const Home: NextPage<IndexProps> = ({ initialConfig, configDegraded }) => {
                       aria-pressed={isSelected}
                       disabled={disabled}
                       onClick={() => setActiveSpaceId(isSelected ? undefined : space.id)}
-                      className={`text-xs px-3 py-1 rounded-full font-semibold transition-all flex items-center gap-1.5 border ${
+                      className={`flex-shrink-0 whitespace-nowrap text-xs px-3 py-1 rounded-full font-semibold transition-all flex items-center gap-1.5 border ${
                         isSelected
                           ? 'border-slate-800 bg-slate-800 text-white shadow-sm'
                           : disabled

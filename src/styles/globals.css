@@ -231,3 +231,69 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ── 行動版日曆：標題獨占一列、按鈕縮小，避免工具列擠壓換行 ── */
+@media (max-width: 640px) {
+  .fc .fc-toolbar.fc-header-toolbar {
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+    margin-bottom: 0.75rem !important;
+  }
+
+  .fc .fc-toolbar-chunk:nth-child(2) {
+    order: -1;
+    flex: 1 0 100%;
+    text-align: center;
+  }
+
+  .fc .fc-toolbar-title {
+    font-size: 1.05rem !important;
+  }
+
+  .fc .fc-button {
+    padding: 0.3rem 0.55rem !important;
+    font-size: 0.75rem !important;
+  }
+
+  .fc .fc-button-group {
+    flex-wrap: nowrap;
+  }
+
+  .fc .fc-col-header-cell-cushion {
+    font-size: 0.7rem;
+    padding: 0.2rem 0 !important;
+  }
+
+  .fc .fc-daygrid-day-number {
+    font-size: 0.75rem;
+    min-width: 1.25rem;
+    padding: 0.15rem 0.3rem;
+  }
+
+  .fc .fc-daygrid-event {
+    margin: 1px 2px !important;
+  }
+
+  .fc-event-main .ev-title {
+    font-size: 0.7rem;
+  }
+
+  .fc-event-main .ev-time-line {
+    font-size: 0.65rem;
+  }
+
+  /* 月檢視單格只有約 50px 寬，時間一定被裁掉；改為只顯示標題，
+     完整時間仍可透過 hover／tooltip 與週、日檢視查看 */
+  .fc-daygrid-event .ev-time-line {
+    display: none;
+  }
+
+  .fc-event-main .ev-title {
+    white-space: normal;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.15;
+  }
+}

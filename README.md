@@ -2,6 +2,12 @@
 
 以 Next.js（Pages Router）開發的空間預約系統，直接以 Google Calendar 作為預約資料的單一來源：使用者在前台選時段即時確認可用性，送出後直接寫入官方日曆，管理員在 `/admin` 調整場地、表單欄位與事件顯示設定。
 
+## 畫面預覽
+
+| 桌機 | 手機 |
+| --- | --- |
+| ![桌機版首頁](docs/screenshots/home-desktop.webp) | ![手機版首頁](docs/screenshots/home-mobile.webp) |
+
 ## 功能特點
 
 - 即時查看各場地可用狀態（FullCalendar 月／週／日檢視）

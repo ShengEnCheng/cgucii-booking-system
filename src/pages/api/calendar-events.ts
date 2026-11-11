@@ -5,6 +5,7 @@ import { fetchRawCalendarEvents, getEffectiveCalendarId } from '@/utils/googleCa
 import { getEventSpaceId, getSpaceKeywords, isEventForSpace } from '@/utils/availabilityUtils'
 import { getAccentColor, getColorHex } from '@/data/colors'
 import { taipeiMonthRange } from '@/config/bookingRules'
+import { toCalendarEventTime } from '@/utils/eventTime'
 import { extractApplicant, sanitizeText } from '@/utils/sanitize'
 import { consumeRateLimit, getClientIp } from '@/utils/rateLimit'
 import { spaces } from '@/data/spaces'
@@ -125,8 +126,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       events.push({
         id: raw.id || '',
         title,
-        start: raw.start?.dateTime || raw.start?.date || '',
-        end: raw.end?.dateTime || raw.end?.date || '',
+        // 一律轉成 UTC ISO；帶 +08:00 的字串會被 FullCalendar 誤判成 UTC 而多出 8 小時
+        start: toCalendarEventTime(raw.start?.dateTime || raw.start?.date),
+        end: toCalendarEventTime(raw.end?.dateTime || raw.end?.date),
         color: disabledSpaceIds.has(String(knownSpaceId)) && !useGoogleColors
           ? '#94a3b8'
           : color,

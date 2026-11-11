@@ -42,6 +42,43 @@ test.describe('首頁與預約表單', () => {
   })
 })
 
+test.describe('日曆時間顯示', () => {
+  test('事件時間以台北時區顯示，不因時區位移而偏移', async ({ page }) => {
+    // 取台北時區當月 15 日的 09:00–10:00，換算成 UTC 後提供給前端（模擬真實 API 輸出）
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Taipei',
+      year: 'numeric',
+      month: '2-digit',
+    }).format(new Date())
+    const dateStr = `${parts}-15`
+    const start = new Date(`${dateStr}T09:00:00+08:00`)
+    const end = new Date(`${dateStr}T10:00:00+08:00`)
+
+    await page.route('**/api/calendar-events*', (route) =>
+      route.fulfill({
+        status: 200,
+        json: [
+          {
+            id: 'tz-event',
+            title: 'C01會議室 - 時區測試',
+            start: start.toISOString(),
+            end: end.toISOString(),
+            color: '#D60000',
+            location: 'C01會議室',
+            applicant: '',
+            spaceId: '3',
+          },
+        ],
+      })
+    )
+
+    await page.goto('/')
+    const event = page.locator('.fc-event', { hasText: '時區測試' })
+    await expect(event).toBeVisible({ timeout: 20_000 })
+    await expect(event).toContainText('09:00–10:00')
+  })
+})
+
 test.describe('公開 API', () => {
   test('public-config 不含個資相關欄位', async ({ request }) => {
     const response = await request.get('/api/public-config')
