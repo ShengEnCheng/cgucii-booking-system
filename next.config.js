@@ -1,3 +1,12 @@
+const isDev = process.env.NODE_ENV !== 'production'
+
+// 開發模式的 webpack eval-source-map 與 React Refresh 需要 'unsafe-eval'；
+// 正式建置不需要，因此只在 dev 放行。HMR 另外需要 ws: 連線。
+const scriptSrc = isDev
+  ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+  : "script-src 'self' 'unsafe-inline'"
+const connectSrc = isDev ? "connect-src 'self' ws: http://localhost:* http://127.0.0.1:*" : "connect-src 'self'"
+
 const securityHeaders = [
   {
     key: 'X-Content-Type-Options',
@@ -22,11 +31,11 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
+      scriptSrc,
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
-      "connect-src 'self'",
+      connectSrc,
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",

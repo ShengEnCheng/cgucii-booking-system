@@ -434,6 +434,20 @@ const Home: NextPage<IndexProps> = ({ initialConfig, configDegraded }) => {
                   全部場地
                 </button>
 
+                {/* 手機版沒有左側場地卡，選好場地後在這裡提供明確的預約入口 */}
+                {activeSpace && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDate(undefined)
+                      setBookingSpace(activeSpace)
+                    }}
+                    className="md:hidden text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 px-3.5 py-1.5 rounded-full shadow-sm transition-all"
+                  >
+                    預約 {activeSpace.name} →
+                  </button>
+                )}
+
                 {displaySpaces.map((space) => {
                   const accent = getAccentColor(space.colorId)
                   const isSelected = activeSpaceId === space.id

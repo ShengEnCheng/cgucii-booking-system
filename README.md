@@ -32,6 +32,7 @@ npm start           # 啟動生產伺服器
 npm run lint        # ESLint
 npm run typecheck   # TypeScript 型別檢查
 npm run test        # vitest 單元測試
+npm run test:e2e    # Playwright 端對端測試（會自動啟動 dev server）
 ```
 
 ## 專案結構
@@ -67,7 +68,8 @@ tests/                          vitest 單元測試
 ## 測試與 CI
 
 - `tests/` 覆蓋可用性判斷、預約規則（日期合法性、營業時間、時長）、設定正規化、輸入清理與限流。
-- `.github/workflows/ci.yml` 在 push / PR 時依序執行 lint → typecheck → test → build。
+- `.github/workflows/ci.yml` 在 push / PR 時依序執行 lint → typecheck → test → build，再跑一輪 Playwright E2E。
+- E2E 涵蓋：首頁與日曆載入、預約對話框開啟／Esc 關閉、必填欄位阻擋送出、時段選項範圍、公開 API 不洩漏個資與內部錯誤、手機版版面無水平溢出。
 
 ## 部署（Vercel）
 

@@ -41,3 +41,7 @@ Thumbs.db
 # 編譯快取
 *.tsbuildinfo
 tsconfig.tsbuildinfo
+# 測試產物
+test-results/
+playwright-report/
+blob-report/
