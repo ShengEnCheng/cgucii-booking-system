@@ -49,10 +49,13 @@ export function getSpaceKeywords(
 
   const config = { spaceOverrides: overrides || {} }
   const space = findSpaceByNameOrId(raw, config)
-  const keywords = new Set<string>([raw.toLowerCase()])
+  // 傳進來的是純數字 id 時不要把它當關鍵字（見下方註解）
+  const keywords = new Set<string>(/^\d+$/.test(raw) ? [] : [raw.toLowerCase()])
 
   if (space) {
-    keywords.add(space.id)
+    // 注意：不可把「純數字 id」放進關鍵字做子字串比對，
+    // 否則 id '1' 會命中標題裡的 'C01'、'2026' 等任何含該數字的文字。
+    // id 的權威比對交給結構化標記 getEventSpaceId。
     keywords.add(space.name.toLowerCase())
     keywords.add(spaceDisplayName(space, config).toLowerCase())
     const override = overrides?.[space.id]?.name

@@ -5,3 +5,17 @@ dist
 .trae
 .log
 .figma
+# 本機設定與憑證絕不上傳
+.env
+.env.*
+*.json.key
+credentials*.json
+service-account*.json
+google-credentials*.json
+cgu-incubation-booking-*.json
+# 測試與量測產物
+test-results
+playwright-report
+.lighthouseci
+coverage
+.next/cache

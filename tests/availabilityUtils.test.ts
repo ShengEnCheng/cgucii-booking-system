@@ -38,6 +38,16 @@ describe('isEventForSpace', () => {
     expect(isEventForSpace(event, kw4, '4')).toBe(false)
   })
 
+  it('純數字 id 不可當子字串比對（C01 不應被認成 1 號場地）', () => {
+    const kw1 = getSpaceKeywords('1')
+    const kw2 = getSpaceKeywords('2')
+    const event = { summary: 'C01會議室 - 育成廠商 - 海力克', location: '' }
+    expect(isEventForSpace(event, kw1, '1')).toBe(false)
+    expect(isEventForSpace(event, kw2, '2')).toBe(false)
+    // 正確應該認成 3 號場地
+    expect(isEventForSpace(event, kw3, '3')).toBe(true)
+  })
+
   it('舊事件（無標記）用標題與地點比對', () => {
     expect(isEventForSpace({ summary: 'C01會議室 - 月會' }, kw3, '3')).toBe(true)
     expect(isEventForSpace({ summary: '月會', location: 'C02會議室' }, kw4, '4')).toBe(true)
