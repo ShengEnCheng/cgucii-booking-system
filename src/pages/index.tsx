@@ -315,6 +315,8 @@ const Home: NextPage<IndexProps> = ({ initialConfig, configDegraded }) => {
                         src={space.image}
                         alt={space.name}
                         fill
+                        placeholder={space.blurDataURL ? 'blur' : 'empty'}
+                        blurDataURL={space.blurDataURL}
                         className={`object-cover transition-transform duration-500 ${
                           !disabled ? 'group-hover:scale-105' : ''
                         }`}
@@ -569,6 +571,8 @@ const Home: NextPage<IndexProps> = ({ initialConfig, configDegraded }) => {
                     src={bookingSpace.image}
                     alt={bookingSpace.name}
                     fill
+                    placeholder={bookingSpace.blurDataURL ? 'blur' : 'empty'}
+                    blurDataURL={bookingSpace.blurDataURL}
                     className="object-cover"
                     sizes="(max-width: 768px) 100vw, 36vw"
                   />

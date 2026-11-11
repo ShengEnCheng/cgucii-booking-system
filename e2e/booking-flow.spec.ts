@@ -1,24 +1,5 @@
 import { expect, test } from '@playwright/test'
-
-/** 桌面版從側欄卡片開表單；手機版先選場地 chips，再用行動版 CTA 開表單 */
-async function openBookingDialog(page: import('@playwright/test').Page) {
-  const aside = page.locator('aside')
-  if (await aside.isVisible()) {
-    const bookButton = page.getByRole('button', { name: /^預約/ }).first()
-    await expect(bookButton).toBeVisible({ timeout: 20_000 })
-    await bookButton.click()
-  } else {
-    const chip = page.getByRole('button', { name: /C01會議室/ }).first()
-    await expect(chip).toBeVisible({ timeout: 20_000 })
-    await chip.click()
-    const mobileCta = page.getByRole('button', { name: /^預約 C01會議室/ })
-    await expect(mobileCta).toBeVisible()
-    await mobileCta.click()
-  }
-  const dialog = page.getByRole('dialog')
-  await expect(dialog).toBeVisible()
-  return dialog
-}
+import { openBookingDialog } from './helpers'
 
 test.describe('首頁與預約表單', () => {
   test('首頁載入場地與日曆', async ({ page }) => {

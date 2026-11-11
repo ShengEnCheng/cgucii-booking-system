@@ -48,6 +48,10 @@ const securityHeaders = [
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  images: {
+    // 讓 next/image 優化器輸出更小的格式（原始檔已是 webp）
+    formats: ['image/avif', 'image/webp'],
+  },
   async headers() {
     return [
       {

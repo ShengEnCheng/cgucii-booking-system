@@ -64,12 +64,14 @@ tests/                          vitest 單元測試
 4. **公開 API 不回傳個資**：`/api/calendar-events` 只回 `id/title/start/end/color/location/applicant/spaceId`，`applicant` 由伺服器擷取並清理，完整 description（含電話、Email）不對外。
 5. **預約寫入失敗要能回滾**：insert 之後任何步驟失敗都會嘗試刪除剛建立的事件，避免留下孤兒事件把時段卡死。
 6. **設定讀取失敗不得靜默改變行為**：`readAppConfigMeta()` 會回報 `degraded`，`DEFAULT_APP_CONFIG` 不包含任何停用場地。
+7. **場地圖片一律用 webp**：原始 jpg 已轉檔並移除（總大小 1.4MB → 180KB），`spaces.ts` 內另附 16px 的 `blurDataURL` 作為載入前的模糊預覽；新增圖片請比照辦理，並在 `next.config.js` 的 `images.formats` 下由優化器輸出 avif/webp。
 
 ## 測試與 CI
 
 - `tests/` 覆蓋可用性判斷、預約規則（日期合法性、營業時間、時長）、設定正規化、輸入清理與限流。
 - `.github/workflows/ci.yml` 在 push / PR 時依序執行 lint → typecheck → test → build，再跑一輪 Playwright E2E。
 - E2E 涵蓋：首頁與日曆載入、預約對話框開啟／Esc 關閉、必填欄位阻擋送出、時段選項範圍、公開 API 不洩漏個資與內部錯誤、手機版版面無水平溢出。
+- `e2e/booking-submit.spec.ts` 以 `page.route()` 攔截 `check-availability` / `submit-booking`，在不需真實 Google 憑證的情況下驗證完整送單流程（成功、409 衝突、503 無法確認、容量超限），並斷言送出內容包含 `spaceId` 且不含 `colorId`。
 
 ## 部署（Vercel）
 

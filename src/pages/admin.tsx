@@ -499,7 +499,7 @@ export default function Admin() {
                               className="text-[11px] mt-1 text-slate-400"
                             >
                               {isSafeAssetPath(o.image ?? s.image)
-                                ? '請使用站內路徑，例如 /images/space3.jpg'
+                                ? '請使用站內路徑，例如 /images/space3.webp'
                                 : '⚠️ 必須是以 / 開頭的站內路徑，外部網址會讓前台圖片載入失敗'}
                             </p>
                           </div>

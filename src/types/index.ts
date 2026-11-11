@@ -3,6 +3,8 @@ export interface Space {
   name: string;
   description: string;
   image: string;
+  /** 圖片載入前的模糊預覽（base64 data URL，選填） */
+  blurDataURL?: string;
   capacity: number;
   price: number;
   features: string[];
