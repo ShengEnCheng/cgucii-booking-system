@@ -61,7 +61,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ ...saved, _meta: { degraded: false, source: 'write' } })
     } catch (error: any) {
       console.error('[admin/config] 儲存設定失敗:', error)
-      return res.status(500).json({ error: '儲存設定失敗，請稍後再試' })
+      // 後台是受保護端點，回傳可操作的訊息（例如尚未連結 KV）
+      return res.status(503).json({
+        error: error?.message?.includes('唯讀')
+          ? error.message
+          : '儲存設定失敗，請稍後再試',
+      })
     }
   }
 

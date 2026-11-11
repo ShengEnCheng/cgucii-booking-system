@@ -4,6 +4,7 @@
 // src/config/app-config.json。這裡只處理 IO，型別與正規化在 configSchema.ts，
 // 讓 client 端可以安全地匯入設定型別與判斷邏輯。
 
+import bundledConfig from '@/config/app-config.json'
 import {
   DEFAULT_APP_CONFIG,
   normalizeAppConfig,
@@ -26,7 +27,18 @@ let cache: CachedConfig | null = null
 let lastReadDegraded = false
 let lastReadSource: ConfigSource = 'default'
 
-export type ConfigSource = 'kv' | 'file' | 'default'
+export type ConfigSource = 'kv' | 'file' | 'bundled' | 'default'
+
+/**
+ * 打包進 bundle 的設定（repo 內的 src/config/app-config.json）。
+ *
+ * Vercel 的 serverless bundle 只會追蹤 import 到的檔案，執行階段用 fs 讀
+ * `process.cwd()/src/config/...` 會找不到；因此這裡改成靜態 import，
+ * 沒有 KV、檔案也讀不到時，至少能沿用 repo 裡的設定，而不是落回空白預設值。
+ */
+export function readBundledConfig(): AppConfig {
+  return normalizeAppConfig(bundledConfig as unknown as Partial<AppConfig>)
+}
 
 export function hasKv(): boolean {
   return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
@@ -85,10 +97,22 @@ export async function readAppConfigMeta(options: { skipCache?: boolean } = {}): 
     lastReadSource = hasKv() ? 'kv' : 'file'
     return { config, degraded: false, source: lastReadSource }
   } catch (error) {
-    console.error('[appConfig] 讀取設定失敗，暫用安全預設值:', error)
-    lastReadDegraded = true
-    lastReadSource = 'default'
-    return { config: normalizeAppConfig(DEFAULT_APP_CONFIG), degraded: true, source: 'default' }
+    if (hasKv()) {
+      // KV 故障：明確標記 degraded，讓健康檢查與前台看得出來
+      console.error('[appConfig] 讀取 Vercel KV 失敗，暫用 repo 內的設定:', error)
+      lastReadDegraded = true
+      lastReadSource = 'bundled'
+      return { config: readBundledConfig(), degraded: true, source: 'bundled' }
+    }
+
+    // 沒有 KV 且讀不到檔案（Vercel 檔案系統）：沿用打包進 bundle 的設定。
+    // 這不是異常狀態，只是「設定唯讀」，因此不標記 degraded。
+    console.warn(
+      '[appConfig] 無法讀取本機設定檔（正式環境通常如此），改用打包進 bundle 的 src/config/app-config.json'
+    )
+    lastReadDegraded = false
+    lastReadSource = 'bundled'
+    return { config: readBundledConfig(), degraded: false, source: 'bundled' }
   }
 }
 
@@ -108,7 +132,14 @@ export async function writeAppConfig(config: AppConfig): Promise<AppConfig> {
     const fs = await import('fs')
     const path = await import('path')
     const filePath = path.join(process.cwd(), ...CONFIG_FILE)
-    fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2), 'utf8')
+    try {
+      fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2), 'utf8')
+    } catch {
+      // 正式環境（Vercel）檔案系統唯讀，沒有 KV 就無法保存設定
+      throw new Error(
+        '此環境無法寫入設定檔（Vercel 檔案系統唯讀）。請連結 Vercel KV / Upstash Redis 後再儲存。'
+      )
+    }
   }
 
   cache = { config: normalized, expiresAt: Date.now() + CACHE_TTL_MS }
