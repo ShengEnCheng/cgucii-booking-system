@@ -7,10 +7,10 @@ export const BUSINESS_HOURS = {
 } as const
 
 export const BOOKING_RULES = {
-  /** 時間選項的粒度（分鐘） */
-  slotMinutes: 60,
+  /** 時間選項的粒度（分鐘）：30 分鐘，支援 09:30–11:30 這類真實會議 */
+  slotMinutes: 30,
   /** 單筆預約最短時長（分鐘） */
-  minDurationMinutes: 60,
+  minDurationMinutes: 30,
   /** 單筆預約最長時長（分鐘） */
   maxDurationMinutes: 240,
   /** 最多可提前幾天預約 */

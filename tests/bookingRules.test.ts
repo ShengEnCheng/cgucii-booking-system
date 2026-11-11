@@ -36,9 +36,12 @@ describe('validateBookingWindow', () => {
     expect(validateBookingWindow({ ...base, endTime: '23:00' }, { now }).ok).toBe(false)
   })
 
-  it('時長限制', () => {
+  it('時長限制（30 分鐘可、15 分鐘不可）', () => {
     expect(
       validateBookingWindow({ date: '2026-12-01', startTime: '10:00', endTime: '10:30' }, { now }).ok
+    ).toBe(true)
+    expect(
+      validateBookingWindow({ date: '2026-12-01', startTime: '10:00', endTime: '10:15' }, { now }).ok
     ).toBe(false)
     expect(
       validateBookingWindow({ date: '2026-12-01', startTime: '09:00', endTime: '15:00' }, { now }).ok
@@ -64,16 +67,18 @@ describe('validateBookingWindow', () => {
 })
 
 describe('時間選項', () => {
-  it('依營業時間產生', () => {
+  it('依營業時間與 30 分鐘粒度產生', () => {
     const options = generateTimeOptions()
     expect(options[0]).toBe('08:00')
-    expect(options[options.length - 1]).toBe('21:00')
-    expect(options).toHaveLength(14)
+    expect(options).toContain('09:30')
+    expect(options).toContain('11:30')
+    expect(options[options.length - 1]).toBe('21:30')
+    expect(options).toHaveLength(28)
   })
 
   it('結束時間一定晚於開始時間且不超過打烊', () => {
-    const options = generateEndTimeOptions('21:00')
-    expect(options).toEqual(['22:00'])
+    expect(generateEndTimeOptions('21:00')).toEqual(['21:30', '22:00'])
+    expect(generateEndTimeOptions('21:30')).toEqual(['22:00'])
   })
 })
 

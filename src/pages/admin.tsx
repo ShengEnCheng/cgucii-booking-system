@@ -4,7 +4,7 @@ import Head from 'next/head'
 import Image from 'next/image'
 import { spaces } from '@/data/spaces'
 import { isSafeAssetPath, spaceDisplayName } from '@/utils/configSchema'
-import { taipeiMonthRange } from '@/config/bookingRules'
+import { BUSINESS_HOURS, taipeiMonthRange, timeToMinutes } from '@/config/bookingRules'
 import toast, { Toaster } from 'react-hot-toast'
 
 const SNAPSHOT_KEYS = [
@@ -51,6 +51,82 @@ function formatBookingTime(value: string, allDay: boolean): string {
   return allDay ? `${value}（全天）` : value.replace('T', ' ')
 }
 
+// 使用率報表的資料結構。
+// 同樣刻意不從 API route 檔匯入型別：該檔依賴 server-only 的 googleapis，
+// 一旦被前端 import 就會把整套 Google SDK 打進瀏覽器 bundle。
+type UsageSummary = {
+  totalBookings: number
+  totalHours: number
+  avgHours: number
+  busiestWeekday: { weekday: number; count: number } | null
+  busiestSpace: { spaceId: string; spaceName: string; bookings: number; hours: number } | null
+}
+
+type SpaceUsageRow = {
+  spaceId: string
+  spaceName: string
+  bookings: number
+  hours: number
+  /** 0–1 的比值（已預約時數 / 期間營業時數），可能大於 1 */
+  utilizationRate: number
+  disabled: boolean
+}
+
+type HourBucket = { hour: number; count: number }
+
+type WeekdayUsageRow = { weekday: number; count: number; hours: number }
+
+type MonthUsageRow = { month: string; bookings: number; hours: number }
+
+type UsageReport = {
+  summary: UsageSummary
+  bySpace: SpaceUsageRow[]
+  byHour: HourBucket[]
+  byWeekday: WeekdayUsageRow[]
+  byMonth: MonthUsageRow[]
+}
+
+/** 星期顯示文字，索引對應 API 的 weekday（0＝週日） */
+const WEEKDAY_LABELS = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'] as const
+
+/** 報表表格的顯示順序：週一 → 週日（比 0–6 的週日開頭更符合直覺） */
+const WEEKDAY_DISPLAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const
+
+/** 每日營業時長（小時），與 API 的營業時數基準一致（現為 08:00–22:00 ＝ 14 小時） */
+const DAILY_BUSINESS_HOURS = (() => {
+  const open = timeToMinutes(BUSINESS_HOURS.open)
+  const close = timeToMinutes(BUSINESS_HOURS.close)
+  if (open === null || close === null || close <= open) return 0
+  return (close - open) / 60
+})()
+
+/** 期間天數（含頭尾）；用 UTC 相減，避免瀏覽器時區影響計算結果 */
+function countRangeDays(start: string, end: string): number {
+  const startMs = Date.parse(`${start}T00:00:00Z`)
+  const endMs = Date.parse(`${end}T00:00:00Z`)
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return 0
+  return Math.floor((endMs - startMs) / 86400000) + 1
+}
+
+/** 時數顯示：固定一位小數 */
+function formatHours(value: number): string {
+  const hours = Number(value)
+  return `${(Number.isFinite(hours) ? hours : 0).toFixed(1)} 小時`
+}
+
+/** 使用率顯示：API 回傳 0–1 的比值，這裡轉成百分比 */
+function formatUtilization(rate: number): string {
+  const value = Number(rate)
+  return `${((Number.isFinite(value) ? value : 0) * 100).toFixed(1)}%`
+}
+
+/** 長條寬度：截斷在 0–100%，避免重疊預約或營業時間外事件造成破版 */
+function utilizationBarWidth(rate: number): string {
+  const value = Number(rate)
+  const percent = Number.isFinite(value) ? value * 100 : 0
+  return `${Math.min(100, Math.max(0, percent))}%`
+}
+
 export default function Admin() {
   const [logoPath, setLogoPath] = useState('')
   const [disabledIds, setDisabledIds] = useState<string[]>([])
@@ -64,7 +140,7 @@ export default function Admin() {
   const [saving, setSaving] = useState(false)
   const [configDegraded, setConfigDegraded] = useState(false)
   const [loadedSnapshot, setLoadedSnapshot] = useState('')
-  const [activeTab, setActiveTab] = useState<'health' | 'spaces' | 'fields' | 'system' | 'bookings'>('health')
+  const [activeTab, setActiveTab] = useState<'health' | 'spaces' | 'fields' | 'system' | 'bookings' | 'reports'>('health')
 
   // 預約管理狀態：日期區間預設為台北時區的當月
   const [bookingRange, setBookingRange] = useState<{ start: string; end: string }>({ start: '', end: '' })
@@ -76,11 +152,24 @@ export default function Admin() {
   const [bookingsError, setBookingsError] = useState('')
   const [cancelingEventId, setCancelingEventId] = useState('')
 
+  // 使用率報表狀態：日期區間同樣預設為台北時區的當月
+  const [reportRange, setReportRange] = useState<{ start: string; end: string }>({ start: '', end: '' })
+  const [reportQueriedRange, setReportQueriedRange] = useState<{ start: string; end: string }>({
+    start: '',
+    end: '',
+  })
+  const [report, setReport] = useState<UsageReport | null>(null)
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportLoaded, setReportLoaded] = useState(false)
+  const [reportError, setReportError] = useState('')
+
   // 預設日期區間＝台北時區的當月。
   // 刻意放在 effect 內計算而不是 useState 的初始值：/admin 是靜態預渲染頁面，
   // 初始值若在 build 當下就固定，使用者隔月才開頁面會看到上個月。
   useEffect(() => {
-    setBookingRange(taipeiMonthRange())
+    const range = taipeiMonthRange()
+    setBookingRange(range)
+    setReportRange(range)
   }, [])
 
   // 日曆連線診斷狀態
@@ -297,6 +386,81 @@ export default function Admin() {
     }
   }
 
+  // ── 使用率報表：查詢 ──────────────────────────────────────────────────────
+
+  const queryReport = useCallback(async () => {
+    if (!reportRange.start || !reportRange.end) {
+      toast.error('請先選擇完整的日期區間')
+      return
+    }
+
+    setReportLoading(true)
+    setReportError('')
+    const t = toast.loading('正在計算使用率報表...')
+    try {
+      const params = new URLSearchParams({ start: reportRange.start, end: reportRange.end })
+      const r = await fetch(`/api/admin/reports?${params.toString()}`)
+      const data = await r.json().catch(() => null)
+
+      if (r.ok && data && typeof data === 'object') {
+        // 逐欄位補預設值：即使 API 回應少了某個區塊（舊版或中間層錯誤頁），畫面也不會整頁炸掉
+        const payload = data as Partial<UsageReport>
+        const summary = payload.summary || ({} as Partial<UsageSummary>)
+        setReport({
+          summary: {
+            totalBookings: Number(summary.totalBookings) || 0,
+            totalHours: Number(summary.totalHours) || 0,
+            avgHours: Number(summary.avgHours) || 0,
+            busiestWeekday: summary.busiestWeekday ?? null,
+            busiestSpace: summary.busiestSpace ?? null,
+          },
+          bySpace: Array.isArray(payload.bySpace) ? payload.bySpace : [],
+          byHour: Array.isArray(payload.byHour) ? payload.byHour : [],
+          byWeekday: Array.isArray(payload.byWeekday) ? payload.byWeekday : [],
+          byMonth: Array.isArray(payload.byMonth) ? payload.byMonth : [],
+        })
+        setReportQueriedRange({ start: reportRange.start, end: reportRange.end })
+        toast.success(`報表計算完成，共 ${Number(summary.totalBookings) || 0} 筆預約`, { id: t })
+      } else {
+        const message = (data as { error?: string } | null)?.error || '報表查詢失敗，請稍後再試'
+        setReport(null)
+        setReportError(message)
+        toast.error(message, { id: t })
+      }
+      setReportLoaded(true)
+    } catch (e) {
+      setReport(null)
+      setReportLoaded(true)
+      setReportError('報表查詢失敗，請檢查網路連線或稍後再試')
+      toast.error('報表查詢失敗，請檢查網路連線或稍後再試', { id: t })
+    } finally {
+      setReportLoading(false)
+    }
+  }, [reportRange.start, reportRange.end])
+
+  // 第一次切到「使用率報表」分頁時自動載入當月資料，省一次點擊
+  useEffect(() => {
+    if (activeTab === 'reports' && !reportLoaded && !reportLoading) {
+      queryReport()
+    }
+  }, [activeTab, reportLoaded, reportLoading, queryReport])
+
+  // 報表衍生值：只在有報表時才有意義，供標題說明與長條圖正規化使用。
+  // 天數一律用「實際查詢的區間」計算：使用者可能改了日期輸入卻還沒按查詢，
+  // 若用輸入框的值會讓說明文字與畫面上的數字對不起來。
+  const reportDisplayRange = reportQueriedRange.start ? reportQueriedRange : reportRange
+  const reportDays = report ? countRangeDays(reportDisplayRange.start, reportDisplayRange.end) : 0
+  const reportAvailableHours = reportDays * DAILY_BUSINESS_HOURS
+  const reportAttributedBookings = report
+    ? report.bySpace.reduce((sum, row) => sum + row.bookings, 0)
+    : 0
+  const reportUnattributedBookings = report
+    ? Math.max(0, report.summary.totalBookings - reportAttributedBookings)
+    : 0
+  const reportMaxHourCount = report
+    ? report.byHour.reduce((max, row) => Math.max(max, row.count), 0)
+    : 0
+
   return (
     <>
       <Head>
@@ -363,6 +527,7 @@ export default function Admin() {
               { id: 'fields', label: '📝 預約表單欄位' },
               { id: 'system', label: '⚙️ 系統與過濾設定' },
               { id: 'bookings', label: '📅 預約管理' },
+              { id: 'reports', label: '📊 使用率報表' },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -1014,6 +1179,315 @@ export default function Admin() {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* TAB 6: 使用率報表 */}
+          {activeTab === 'reports' && (
+            <div className="space-y-6">
+              {/* 查詢條件 */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6">
+                <h2 className="text-base font-bold text-slate-800 mb-1">使用率報表區間</h2>
+                <p className="text-xs text-slate-500 mb-4">
+                  資料即時來自 Google 日曆，事件以「開始日」歸屬期間（跨月不重複計算）；營業時數以每日{' '}
+                  {BUSINESS_HOURS.open}–{BUSINESS_HOURS.close}（{DAILY_BUSINESS_HOURS} 小時）計算，
+                  單次查詢上限 92 天
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="form-label">開始日期</label>
+                    <input
+                      type="date"
+                      className="input-field"
+                      value={reportRange.start}
+                      onChange={(e) => setReportRange((prev) => ({ ...prev, start: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">結束日期</label>
+                    <input
+                      type="date"
+                      className="input-field"
+                      value={reportRange.end}
+                      onChange={(e) => setReportRange((prev) => ({ ...prev, end: e.target.value }))}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      onClick={queryReport}
+                      disabled={reportLoading}
+                      className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-95 text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-md shadow-blue-500/20 transition-all disabled:opacity-50"
+                    >
+                      {reportLoading ? '⏳ 計算中...' : '🔍 查詢'}
+                    </button>
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      onClick={() => setReportRange(taipeiMonthRange())}
+                      className="w-full bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 text-sm font-bold px-5 py-2.5 rounded-xl transition-all"
+                    >
+                      📅 回到當月
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {reportLoading ? (
+                /* 狀態一：載入中 */
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6 py-12 text-center text-sm text-slate-400">
+                  ⏳ 正在讀取 Google 日曆並計算使用率...
+                </div>
+              ) : reportError ? (
+                /* 狀態二：錯誤 */
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6">
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+                    <p className="text-sm font-bold text-rose-700">⚠️ 報表產生失敗</p>
+                    <p className="text-xs text-rose-600 mt-1 leading-relaxed">{reportError}</p>
+                  </div>
+                </div>
+              ) : !reportLoaded ? (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6 py-12 text-center text-sm text-slate-400">
+                  選擇日期區間後點選「查詢」，即可產生使用率報表
+                </div>
+              ) : !report || report.summary.totalBookings === 0 ? (
+                /* 狀態三：空資料 */
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6 py-12 text-center text-sm text-slate-400">
+                  <p className="font-semibold text-slate-500 mb-1">📭 此區間沒有預約資料</p>
+                  <p className="text-xs">試著放寬日期區間，或確認 Google 日曆上是否已有事件</p>
+                </div>
+              ) : (
+                <>
+                  {/* 四張摘要卡 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5">
+                      <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">總預約數</p>
+                      <p className="text-2xl font-bold text-slate-800 mt-1.5">
+                        {report.summary.totalBookings}
+                        <span className="text-xs font-semibold text-slate-400 ml-1">筆</span>
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5">
+                      <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">總時數</p>
+                      <p className="text-2xl font-bold text-slate-800 mt-1.5">
+                        {report.summary.totalHours.toFixed(1)}
+                        <span className="text-xs font-semibold text-slate-400 ml-1">小時</span>
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5">
+                      <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">平均時長</p>
+                      <p className="text-2xl font-bold text-slate-800 mt-1.5">
+                        {report.summary.avgHours.toFixed(1)}
+                        <span className="text-xs font-semibold text-slate-400 ml-1">小時／筆</span>
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5">
+                      <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">
+                        最忙場地／最忙星期
+                      </p>
+                      <div className="mt-1.5 space-y-1">
+                        <p
+                          className="text-sm font-bold text-slate-800 truncate"
+                          title={report.summary.busiestSpace?.spaceName || ''}
+                        >
+                          {report.summary.busiestSpace
+                            ? `${report.summary.busiestSpace.spaceName}（${report.summary.busiestSpace.bookings} 筆）`
+                            : '—'}
+                        </p>
+                        <p className="text-xs font-semibold text-slate-500">
+                          {report.summary.busiestWeekday
+                            ? `${WEEKDAY_LABELS[report.summary.busiestWeekday.weekday]}（${report.summary.busiestWeekday.count} 筆）`
+                            : '—'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 各場地使用率 */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6">
+                    <h2 className="text-base font-bold text-slate-800 mb-1">各場地使用率</h2>
+                    <p className="text-xs text-slate-500 mb-4">
+                      使用率＝已預約時數 ÷ 期間營業時數（每日 {DAILY_BUSINESS_HOURS} 小時 × {reportDays}{' '}
+                      天 ＝ {reportAvailableHours} 小時）；停用場地仍列出，方便對照歷史使用率
+                    </p>
+
+                    <div className="overflow-x-auto -mx-1 px-1">
+                      <table className="w-full min-w-[640px] text-sm border-collapse">
+                        <thead>
+                          <tr className="text-left text-xs text-slate-500 tracking-wider border-b border-slate-200">
+                            <th className="py-2.5 pr-3 font-bold whitespace-nowrap">場地</th>
+                            <th className="py-2.5 pr-3 font-bold whitespace-nowrap">預約數</th>
+                            <th className="py-2.5 pr-3 font-bold whitespace-nowrap">時數</th>
+                            <th className="py-2.5 font-bold">使用率</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {report.bySpace.map((row) => (
+                            <tr key={row.spaceId} className="hover:bg-slate-50/70 transition-colors">
+                              <td className="py-3 pr-3">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="font-semibold text-slate-800 truncate">{row.spaceName}</span>
+                                  {row.disabled && (
+                                    <span className="text-[11px] font-bold bg-rose-50 text-rose-600 border border-rose-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+                                      已停用
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-3 pr-3 whitespace-nowrap text-slate-700">{row.bookings} 筆</td>
+                              <td className="py-3 pr-3 whitespace-nowrap text-slate-700">{formatHours(row.hours)}</td>
+                              <td className="py-3">
+                                <div className="flex items-center gap-2 min-w-[200px]">
+                                  <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                                    <div
+                                      className={`h-full rounded-full ${
+                                        row.disabled
+                                          ? 'bg-slate-400'
+                                          : 'bg-gradient-to-r from-blue-500 to-indigo-500'
+                                      }`}
+                                      style={{ width: utilizationBarWidth(row.utilizationRate) }}
+                                    />
+                                  </div>
+                                  <span className="w-16 text-right text-xs font-bold text-slate-700 whitespace-nowrap">
+                                    {formatUtilization(row.utilizationRate)}
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {reportUnattributedBookings > 0 && (
+                      <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3 leading-relaxed">
+                        另有 {reportUnattributedBookings}{' '}
+                        筆事件沒有場地標記、也無法用關鍵字比對（多為早期人工建立的事件），只計入上方總數與時段／星期分佈，未列入本表。
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 熱門時段 */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6">
+                    <h2 className="text-base font-bold text-slate-800 mb-1">熱門時段</h2>
+                    <p className="text-xs text-slate-500 mb-4">
+                      依事件「開始時間」統計{' '}
+                      {report.byHour.length > 0
+                        ? `${String(report.byHour[0].hour).padStart(2, '0')}:00–${String(
+                            report.byHour[report.byHour.length - 1].hour
+                          ).padStart(2, '0')}:00`
+                        : '營業時間內'}
+                      的整點分佈；全天事件沒有開始整點，不列入此圖
+                    </p>
+
+                    <div className="overflow-x-auto -mx-1 px-1">
+                      <div className="flex items-end gap-1.5 sm:gap-2 min-w-[560px]">
+                        {report.byHour.map((bucket) => {
+                          const ratio = reportMaxHourCount > 0 ? bucket.count / reportMaxHourCount : 0
+                          const heightPercent =
+                            bucket.count > 0 ? Math.max(4, Math.round(ratio * 100)) : 0
+                          return (
+                            <div key={bucket.hour} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                              <span className="text-[10px] font-bold text-slate-500 leading-none h-3">
+                                {bucket.count > 0 ? bucket.count : ''}
+                              </span>
+                              <div
+                                className="w-full h-32 flex items-end"
+                                title={`${String(bucket.hour).padStart(2, '0')}:00－${bucket.count} 筆`}
+                              >
+                                <div
+                                  className="w-full rounded-t-md bg-gradient-to-t from-blue-600 to-indigo-400"
+                                  style={{ height: `${heightPercent}%` }}
+                                />
+                              </div>
+                              <span className="text-[10px] text-slate-400 leading-none">
+                                {String(bucket.hour).padStart(2, '0')}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 星期分佈與月份趨勢（跨月才顯示月份） */}
+                  <div
+                    className={`grid grid-cols-1 gap-6 ${
+                      report.byMonth.length > 0 ? 'lg:grid-cols-2' : ''
+                    }`}
+                  >
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6">
+                      <h2 className="text-base font-bold text-slate-800 mb-1">星期分佈</h2>
+                      <p className="text-xs text-slate-500 mb-4">以事件開始日的星期統計（週一 → 週日）</p>
+                      <div className="overflow-x-auto -mx-1 px-1">
+                        <table className="w-full min-w-[280px] text-sm border-collapse">
+                          <thead>
+                            <tr className="text-left text-xs text-slate-500 tracking-wider border-b border-slate-200">
+                              <th className="py-2.5 pr-3 font-bold">星期</th>
+                              <th className="py-2.5 pr-3 font-bold text-right">預約數</th>
+                              <th className="py-2.5 font-bold text-right">時數</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {WEEKDAY_DISPLAY_ORDER.map((weekday) => {
+                              const row = report.byWeekday.find((item) => item.weekday === weekday)
+                              return (
+                                <tr key={weekday} className="hover:bg-slate-50/70 transition-colors">
+                                  <td className="py-2.5 pr-3 text-slate-700 font-medium">
+                                    {WEEKDAY_LABELS[weekday]}
+                                  </td>
+                                  <td className="py-2.5 pr-3 text-right text-slate-700 font-semibold">
+                                    {row?.count ?? 0}
+                                  </td>
+                                  <td className="py-2.5 text-right text-slate-500">
+                                    {formatHours(row?.hours ?? 0)}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {report.byMonth.length > 0 && (
+                      <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6">
+                        <h2 className="text-base font-bold text-slate-800 mb-1">月份趨勢</h2>
+                        <p className="text-xs text-slate-500 mb-4">查詢區間跨越多月時，逐月列出預約數與時數</p>
+                        <div className="overflow-x-auto -mx-1 px-1">
+                          <table className="w-full min-w-[280px] text-sm border-collapse">
+                            <thead>
+                              <tr className="text-left text-xs text-slate-500 tracking-wider border-b border-slate-200">
+                                <th className="py-2.5 pr-3 font-bold">月份</th>
+                                <th className="py-2.5 pr-3 font-bold text-right">預約數</th>
+                                <th className="py-2.5 font-bold text-right">時數</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {report.byMonth.map((row) => (
+                                <tr key={row.month} className="hover:bg-slate-50/70 transition-colors">
+                                  <td className="py-2.5 pr-3 text-slate-700 font-medium whitespace-nowrap">
+                                    {row.month}
+                                  </td>
+                                  <td className="py-2.5 pr-3 text-right text-slate-700 font-semibold">
+                                    {row.bookings}
+                                  </td>
+                                  <td className="py-2.5 text-right text-slate-500">
+                                    {formatHours(row.hours)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </main>

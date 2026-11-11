@@ -17,6 +17,7 @@ npm run lint      # ESLint (next lint)
 npm run typecheck # tsc --noEmit
 npm run test      # vitest run
 npm run test:e2e  # Playwright (builds and starts a production server)
+npm run test:integration  # real Google Calendar / Upstash checks (loads .env.local)
 npx -y @lhci/cli@0.14 autorun  # Lighthouse CI (run npm run build first)
 ```
 
@@ -39,6 +40,7 @@ npx -y @lhci/cli@0.14 autorun  # Lighthouse CI (run npm run build first)
 | `src/utils/sanitize.ts` | Input cleaning, HTML escaping, applicant extraction. |
 | `src/utils/rateLimit.ts` | Fixed-window rate limiting; uses KV `INCR` when configured (shared across instances), otherwise per-instance memory. |
 | `src/utils/bookingToken.ts` | HMAC-signed cancel tokens (eventId + spaceId + expiry), origin resolution for cancel URLs. |
+| `src/utils/kv.ts` | Redis REST client (Upstash). Accepts `KV_REST_API_*` or `UPSTASH_REDIS_REST_*`. Used for config, locks and rate limiting. |
 | `src/utils/mailer.ts` | Booking/cancel notification email via Resend or a custom webhook. Never throws; booking succeeds even if mail fails. |
 
 ### Request flow
@@ -63,6 +65,18 @@ npx -y @lhci/cli@0.14 autorun  # Lighthouse CI (run npm run build first)
 - Each space has a `colorId` used for visual differentiation.
 - Events are created with `timeZone: 'Asia/Taipei'` and a description carrying booking metadata plus the space marker.
 - `CALENDAR_ID` env var can be overridden by the value saved in the admin settings.
+
+## Operations endpoints
+
+- `GET /api/healthz` — public, calls Google once, returns `ok/configSource/configDegraded/calendar/eventCount/latencyMs`; 503 when unhealthy. Polled every 30 min by `.github/workflows/uptime.yml`.
+- `GET /api/cron/backup` — requires `Authorization: Bearer $CRON_SECRET` (fail-closed); writes a 62-day CSV snapshot to KV; scheduled by `vercel.json`.
+- `GET /api/admin/backups` — list/download snapshots (Basic Auth).
+- `GET/POST /api/admin/mail-test` — verify the mail provider without creating a booking.
+- `GET /api/admin/reports` — utilization aggregates for the admin reports tab.
+
+## Booking granularity
+
+`BOOKING_RULES.slotMinutes = 30` (min duration 30, max 240 minutes). Time options, FullCalendar `slotDuration` and server-side validation all derive from that single constant — do not hardcode 60-minute steps elsewhere.
 
 ## CSP and SSR requirement
 

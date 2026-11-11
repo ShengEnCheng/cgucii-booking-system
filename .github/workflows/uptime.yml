@@ -1,0 +1,64 @@
+name: Uptime
+
+# 外部 uptime 監控：每 30 分鐘打一次正式站的 /api/healthz。
+#
+# /api/healthz 會真的讀一次 Google Calendar，並在下列情況回 503：
+#   - Google 憑證失效／日曆讀不到（calendar: 'error'）
+#   - 後台設定讀取失敗（configDegraded: true）
+# curl -f 會把 4xx/5xx 視為失敗，因此 job 失敗就代表服務異常；
+# GitHub 會依 repo 的通知設定寄信給 owner（schedule 觸發的失敗預設通知
+# 最後修改這個 workflow 的人，請確認該帳號已開啟 Email 通知）。
+#
+# 注意：GitHub Actions 的 schedule 在尖峰時段可能延遲數分鐘，且 repo 連續
+# 60 天沒有活動時會自動停用排程；收到停用通知請執行一次 workflow_dispatch。
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 上一輪還沒結束時不要重疊執行；但也不取消進行中的檢查（避免掩蓋問題）
+concurrency:
+  group: uptime-healthz
+  cancel-in-progress: false
+
+jobs:
+  healthz:
+    name: 健康檢查 (/api/healthz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 呼叫健康檢查端點
+        run: |
+          set -uo pipefail
+          URL="https://booking.lab2mkt.me/api/healthz"
+          echo "檢查 ${URL}"
+
+          # 先保留 curl 的離開碼，才能把失敗原因印出來再 exit 1。
+          # --retry 讓 5xx / 連線中斷這種暫時性錯誤有機會自行恢復。
+          status=0
+          body="$(curl -fsS --max-time 25 --retry 2 --retry-delay 5 "${URL}")" || status=$?
+
+          if [ -n "${body}" ]; then
+            echo "回應內容：${body}"
+          fi
+
+          if [ "${status}" -ne 0 ]; then
+            echo "::error::健康檢查失敗（curl 離開碼 ${status}）：${URL}"
+            exit 1
+          fi
+
+          # 狀態碼 200 也可能來自反向代理的維護頁，因此再確認回應內容是本端點的格式
+          case "${body}" in
+            *'"ok":true'*) ;;
+            *)
+              echo "::error::回應內容不是預期的健康檢查結果：${URL}"
+              exit 1
+              ;;
+          esac
+
+          echo "健康檢查通過"
