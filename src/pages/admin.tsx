@@ -3,7 +3,26 @@ import Link from 'next/link'
 import Head from 'next/head'
 import Image from 'next/image'
 import { spaces } from '@/data/spaces'
+import { isSafeAssetPath } from '@/utils/configSchema'
 import toast, { Toaster } from 'react-hot-toast'
+
+const SNAPSHOT_KEYS = [
+  'logoPath',
+  'disabledSpaceIds',
+  'disabledSpaceNames',
+  'spaceOverrides',
+  'hideDisabled',
+  'formFields',
+  'eventFilters',
+  'googleCalendarId',
+  'useGoogleColors',
+] as const
+
+function snapshotOf(source: Record<string, unknown>): string {
+  const picked: Record<string, unknown> = {}
+  for (const key of SNAPSHOT_KEYS) picked[key] = source[key]
+  return JSON.stringify(picked)
+}
 
 export default function Admin() {
   const [logoPath, setLogoPath] = useState('')
@@ -16,6 +35,8 @@ export default function Admin() {
   const [googleCalendarId, setGoogleCalendarId] = useState<string>('')
   const [useGoogleColors, setUseGoogleColors] = useState<boolean>(true)
   const [saving, setSaving] = useState(false)
+  const [configDegraded, setConfigDegraded] = useState(false)
+  const [loadedSnapshot, setLoadedSnapshot] = useState('')
   const [activeTab, setActiveTab] = useState<'health' | 'spaces' | 'fields' | 'system'>('health')
 
   // 日曆連線診斷狀態
@@ -60,6 +81,8 @@ export default function Admin() {
           setEventFilters(typeof data.eventFilters === 'object' ? data.eventFilters : { spacesOnly: false, allowKeywords: [], ignoreKeywords: [] })
           setGoogleCalendarId(typeof data.googleCalendarId === 'string' ? data.googleCalendarId : '')
           setUseGoogleColors(typeof data.useGoogleColors === 'boolean' ? data.useGoogleColors : true)
+          setConfigDegraded(Boolean(data._meta?.degraded))
+          setLoadedSnapshot(snapshotOf(data))
         }
       } catch (err) {
         console.error(err)
@@ -73,13 +96,29 @@ export default function Admin() {
       .catch(() => {})
   }, [])
 
-  const toggleId = (id: string) => {
-    setDisabledIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
-  }
+  const currentSnapshot = snapshotOf({
+    logoPath,
+    disabledSpaceIds: disabledIds,
+    disabledSpaceNames: disabledNames,
+    spaceOverrides,
+    hideDisabled,
+    formFields,
+    eventFilters,
+    googleCalendarId,
+    useGoogleColors,
+  })
 
-  const toggleName = (name: string) => {
-    setDisabledNames((prev) => (prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]))
-  }
+  const hasUnsavedChanges = loadedSnapshot !== '' && currentSnapshot !== loadedSnapshot
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [hasUnsavedChanges])
 
   const save = async () => {
     setSaving(true)
@@ -101,10 +140,16 @@ export default function Admin() {
         }),
       })
       if (r.ok) {
+        const saved = await r.json().catch(() => null)
+        if (saved) {
+          setConfigDegraded(Boolean(saved._meta?.degraded))
+          setLoadedSnapshot(snapshotOf(saved))
+        }
         toast.success('設定儲存成功！已即時套用', { id: t })
         checkHealth()
       } else {
-        toast.error('儲存失敗，請檢查權限或連線', { id: t })
+        const data = await r.json().catch(() => ({}))
+        toast.error((data as { error?: string }).error || '儲存失敗，請檢查權限或連線', { id: t })
       }
     } catch (e) {
       toast.error('儲存發生錯誤', { id: t })
@@ -171,7 +216,7 @@ export default function Admin() {
         </header>
 
         {/* ── 導覽標籤列 ── */}
-        <div className="bg-white border-b border-slate-200 shadow-2xs sticky top-0 z-20">
+        <div className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-20">
           <div className="max-w-5xl mx-auto px-5 flex gap-2 overflow-x-auto py-2">
             {[
               { id: 'health', label: '🩺 Google 日曆連線診斷' },
@@ -196,6 +241,15 @@ export default function Admin() {
 
         {/* ── 主體內容 ── */}
         <main className="max-w-5xl mx-auto p-5 sm:p-6 space-y-6 mt-2">
+          {configDegraded && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+              <p className="font-bold mb-1">⚠️ 目前讀不到正式設定</p>
+              <p className="text-xs leading-relaxed">
+                後端回落到安全預設值（未停用任何場地）。請確認 Vercel KV
+                連線與環境變數；此狀態下儲存設定可能會覆蓋原有內容，建議先排除問題再儲存。
+              </p>
+            </div>
+          )}
           {/* TAB 1: 日曆診斷與連線 */}
           {activeTab === 'health' && (
             <div className="space-y-6">
@@ -389,11 +443,13 @@ export default function Admin() {
                           <button
                             type="button"
                             onClick={() => {
-                              toggleId(s.id)
-                              if (!disabledNames.includes(s.name)) {
-                                toggleName(s.name)
-                              } else {
+                              // 一律以 id 為準；同時清掉舊版留下的「名稱停用」資料，
+                              // 避免 id / name 兩份狀態互相打架導致場地無法重新開放
+                              if (isDisabled) {
+                                setDisabledIds(prev => prev.filter(x => x !== s.id))
                                 setDisabledNames(prev => prev.filter(x => x !== s.name))
+                              } else {
+                                setDisabledIds(prev => (prev.includes(s.id) ? prev : [...prev, s.id]))
                               }
                             }}
                             className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${
@@ -424,7 +480,11 @@ export default function Admin() {
                           <div>
                             <label className="form-label">圖片路徑 (public 目錄下)</label>
                             <input
-                              className="input-field"
+                              className={`input-field ${
+                                !isSafeAssetPath(o.image ?? s.image) ? 'border-rose-400' : ''
+                              }`}
+                              aria-invalid={!isSafeAssetPath(o.image ?? s.image)}
+                              aria-describedby={`space-${s.id}-image-hint`}
                               value={o.image ?? s.image}
                               onChange={(e) =>
                                 setSpaceOverrides((prev) => ({
@@ -434,6 +494,14 @@ export default function Admin() {
                               }
                               placeholder={s.image}
                             />
+                            <p
+                              id={`space-${s.id}-image-hint`}
+                              className="text-[11px] mt-1 text-slate-400"
+                            >
+                              {isSafeAssetPath(o.image ?? s.image)
+                                ? '請使用站內路徑，例如 /images/space3.jpg'
+                                : '⚠️ 必須是以 / 開頭的站內路徑，外部網址會讓前台圖片載入失敗'}
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -625,7 +693,11 @@ export default function Admin() {
         <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-slate-200/90 py-3.5 px-6 z-30 shadow-lg">
           <div className="max-w-5xl mx-auto flex items-center justify-between">
             <div className="text-xs text-slate-500 hidden sm:block">
-              修改設定後請點擊右側按鈕儲存，設定將立即在線上環境生效。
+              {hasUnsavedChanges ? (
+                <span className="font-semibold text-amber-600">● 有未儲存的變更</span>
+              ) : (
+                '修改設定後請點擊右側按鈕儲存，設定將立即在線上環境生效。'
+              )}
             </div>
             <button
               onClick={save}

@@ -49,6 +49,6 @@ export const spaces: Space[] = [
     image: '/images/space1.jpg',
     price: 800,
     features: ['投影設備', '音響系統', 'WiFi', '空調', '展示櫃'],
-    colorId: '5' // 香蕉色
+    colorId: '17' // 葡萄柚（避免與多功能會議室同色）
   }
 ];

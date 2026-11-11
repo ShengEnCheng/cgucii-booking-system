@@ -1,105 +1,186 @@
 import type { NextPage, GetServerSideProps } from 'next'
 import Head from 'next/head'
-import Link from 'next/link'
-import { useState, useEffect, useCallback } from 'react'
-import BookingForm from '../components/BookingForm'
-import { spaces } from '../data/spaces'
 import Image from 'next/image'
-import { Space } from '@/types'
-import Calendar from '@/components/Calendar'
-import { Toaster } from 'react-hot-toast'
-import { readAppConfig } from '@/utils/appConfig'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
+import toast, { Toaster } from 'react-hot-toast'
+import BookingForm from '@/components/BookingForm'
+import { spaces } from '@/data/spaces'
+import type { Space } from '@/types'
+import { getAccentColor } from '@/data/colors'
+import {
+  resolveDisabledSpaceIds,
+  spaceDisplayImage,
+  spaceDisplayName,
+  type AppConfig,
+  type SpaceOverride,
+} from '@/utils/configSchema'
 
-// Google Calendar 顏色對照
-const SPACE_COLORS: Record<string, string> = {
-  '1': '#7986CB', // 薰衣草藍
-  '2': '#33B679', // 鼠尾草綠
-  '5': '#F6C026', // 香蕉黃
-  '8': '#616161', // 石墨灰
-  '11': '#E11D48', // 寶石紅
-}
-function getAccentColor(colorId?: string): string {
-  return SPACE_COLORS[colorId || ''] || '#2563eb'
-}
+// 行事曆含 FullCalendar（約 180KB），用 dynamic 讓首屏先出骨架
+const Calendar = dynamic(() => import('@/components/Calendar'), {
+  ssr: false,
+  loading: () => (
+    <div className="min-h-[500px] flex items-center justify-center text-sm text-slate-500">
+      行事曆載入中...
+    </div>
+  ),
+})
 
-interface AppConfigState {
+type AppConfigState = {
   logoPath: string
   disabledSpaceIds: string[]
-  disabledSpaceNames: string[]
-  spaceOverrides: Record<string, { name?: string; image?: string }>
+  spaceOverrides: Record<string, SpaceOverride>
   hideDisabled: boolean
-  formFields?: Record<string, { show?: boolean; required?: boolean; label?: string }>
+  formFields: Record<string, { show?: boolean; required?: boolean; label?: string }>
 }
 
 interface IndexProps {
-  initialConfig?: AppConfigState
+  initialConfig: AppConfigState
+  configDegraded: boolean
 }
 
-const DEFAULT_CONFIG: AppConfigState = {
-  logoPath: '/images/my-logo.svg',
-  disabledSpaceIds: ['2', '1', '5'],
-  disabledSpaceNames: ['共創空間', '創新發想基地', 'DEMO ROOM'],
-  spaceOverrides: { '3': { name: 'C01會議室' }, '4': { name: 'C02會議室' } },
-  hideDisabled: true,
-  formFields: {},
-}
-
-const Home: NextPage<IndexProps> = ({ initialConfig }) => {
-  // 行事曆篩選用的 active space
+const Home: NextPage<IndexProps> = ({ initialConfig, configDegraded }) => {
   const [activeSpaceId, setActiveSpaceId] = useState<string | undefined>(undefined)
-  // 預約 modal 的目標場地
   const [bookingSpace, setBookingSpace] = useState<Space | null>(null)
-  // 點選行事曆日期時預填的日期
   const [selectedDate, setSelectedDate] = useState<string | undefined>(undefined)
+  const [config, setConfig] = useState<AppConfigState>(initialConfig)
+  const [isConfigDegraded, setIsConfigDegraded] = useState(configDegraded)
+  const [calendarError, setCalendarError] = useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  const [config, setConfig] = useState(initialConfig || DEFAULT_CONFIG)
+  const modalRef = useRef<HTMLDivElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const lastFocusedRef = useRef<HTMLElement | null>(null)
 
+  // 取得最新設定（SSR 已有初始值，這裡只是為了不用重新整理就能套用後台變更）
   useEffect(() => {
+    let cancelled = false
     fetch('/api/public-config')
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (!data) return
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (cancelled || !data || data.degraded) return
         setConfig({
-          logoPath: typeof data.logoPath === 'string' && data.logoPath ? data.logoPath : '/images/my-logo.svg',
-          disabledSpaceIds: Array.isArray(data.disabledSpaceIds) ? data.disabledSpaceIds.map(String) : ['2', '1', '5'],
-          disabledSpaceNames: Array.isArray(data.disabledSpaceNames) ? data.disabledSpaceNames.map(String) : ['共創空間', '創新發想基地', 'DEMO ROOM'],
-          spaceOverrides: typeof data.spaceOverrides === 'object' ? data.spaceOverrides : { '3': { name: 'C01會議室' }, '4': { name: 'C02會議室' } },
-          hideDisabled: data.hideDisabled !== undefined ? !!data.hideDisabled : true,
-          formFields: typeof data.formFields === 'object' ? data.formFields : {},
+          logoPath: data.logoPath || '/images/my-logo.svg',
+          disabledSpaceIds: Array.isArray(data.disabledSpaceIds)
+            ? data.disabledSpaceIds.map(String)
+            : [],
+          spaceOverrides: data.spaceOverrides || {},
+          hideDisabled: data.hideDisabled !== false,
+          formFields: data.formFields || {},
         })
+        setIsConfigDegraded(false)
       })
       .catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [])
 
-  const disabledIdSet = new Set(config.disabledSpaceIds)
-  const disabledNameSet = new Set(config.disabledSpaceNames)
-  const isSpaceDisabled = (s: { id: string; name: string }) =>
-    disabledIdSet.has(s.id) || disabledNameSet.has(s.name)
+  const disabledIdSet = useMemo(
+    () => new Set(config.disabledSpaceIds.map(String)),
+    [config.disabledSpaceIds]
+  )
 
-  const displaySpaces = spaces
-    .map(s => {
-      const o = config.spaceOverrides[s.id] || {}
-      return { ...s, name: o.name ?? s.name, image: o.image ?? s.image }
-    })
-    .filter(s => !config.hideDisabled || !isSpaceDisabled(s))
+  const isSpaceDisabled = useCallback(
+    (spaceId: string) => disabledIdSet.has(String(spaceId)),
+    [disabledIdSet]
+  )
 
-  const activeSpace = displaySpaces.find(s => s.id === activeSpaceId)
-  const availableCount = displaySpaces.filter(s => !isSpaceDisabled(s)).length
+  const displaySpaces = useMemo(
+    () =>
+      spaces
+        .map((space) => ({
+          ...space,
+          name: spaceDisplayName(space, config),
+          image: spaceDisplayImage(space, config),
+        }))
+        .filter((space) => !config.hideDisabled || !isSpaceDisabled(space.id)),
+    [config, isSpaceDisabled]
+  )
 
-  // 點選行事曆時開啟預約表單並預填選中日期
-  const handleDateClick = useCallback((dateStr: string) => {
-    setActiveSpaceId(prev => {
-      const space =
-        displaySpaces.find(s => s.id === prev) ||
-        displaySpaces.find(s => !isSpaceDisabled(s))
-      if (space && !isSpaceDisabled(space)) {
-        setSelectedDate(dateStr)
-        setBookingSpace(space)
+  // 若目前篩選的場地被停用／隱藏，自動清掉，避免日曆被過濾成空白卻無法取消
+  useEffect(() => {
+    if (!activeSpaceId) return
+    if (!displaySpaces.some((space) => space.id === activeSpaceId)) {
+      setActiveSpaceId(undefined)
+    }
+  }, [activeSpaceId, displaySpaces])
+
+  const activeSpace = displaySpaces.find((space) => space.id === activeSpaceId)
+  const availableCount = displaySpaces.filter((space) => !isSpaceDisabled(space.id)).length
+
+  const closeBooking = useCallback(() => {
+    setBookingSpace(null)
+    setSelectedDate(undefined)
+  }, [])
+
+  const handleDateClick = useCallback(
+    (dateStr: string) => {
+      const target =
+        displaySpaces.find((space) => space.id === activeSpaceId && !isSpaceDisabled(space.id)) ||
+        displaySpaces.find((space) => !isSpaceDisabled(space.id))
+
+      if (!target) {
+        toast.error('目前沒有開放的場地，請聯繫育成中心')
+        return
       }
-      return prev
-    })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displaySpaces, config.disabledSpaceIds, config.disabledSpaceNames])
+      if (!activeSpaceId) {
+        // 沒有先選場地時不要默默代入第一個場地，先請使用者挑選
+        toast('請先選擇要預約的場地，再點選日期', { icon: 'ℹ️' })
+        return
+      }
+
+      setSelectedDate(dateStr)
+      setBookingSpace(target)
+    },
+    [activeSpaceId, displaySpaces, isSpaceDisabled]
+  )
+
+  const handleCalendarStatus = useCallback(
+    ({ error }: { loading: boolean; error: string | null }) => {
+      setCalendarError(error)
+    },
+    []
+  )
+
+  // Modal：鎖定背景、Esc 關閉、開啟時聚焦、關閉後歸還焦點
+  useEffect(() => {
+    if (!bookingSpace) return
+
+    lastFocusedRef.current = document.activeElement as HTMLElement | null
+    closeButtonRef.current?.focus()
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeBooking()
+        return
+      }
+      if (event.key !== 'Tab' || !modalRef.current) return
+
+      const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      lastFocusedRef.current?.focus?.()
+    }
+  }, [bookingSpace, closeBooking])
+
+  const connectionHealthy = !calendarError && !isConfigDegraded
 
   return (
     <>
@@ -123,27 +204,24 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
         <link rel="icon" href="/images/my-logo.svg" />
       </Head>
 
-      {/* ── 整體：固定高度，不捲動 ── */}
-      <div className="h-screen flex flex-col overflow-hidden bg-slate-100">
-
+      {/* 行動裝置可捲動、桌機固定滿版 */}
+      <div className="min-h-dvh md:h-dvh flex flex-col md:overflow-hidden bg-slate-100">
         {/* ── 頂部導覽列 ── */}
         <header
           className="h-16 flex-shrink-0 shadow-md z-20 relative overflow-hidden"
           style={{ background: 'linear-gradient(135deg, #091a3e 0%, #0f2c69 50%, #1d4ed8 100%)' }}
         >
-          {/* 背景層次光暈與微光 */}
           <div
             className="absolute inset-0 pointer-events-none opacity-40"
             style={{
-              backgroundImage: 'radial-gradient(circle at 80% 40%, rgba(147, 197, 253, 0.25) 0%, transparent 60%)',
+              backgroundImage:
+                'radial-gradient(circle at 80% 40%, rgba(147, 197, 253, 0.25) 0%, transparent 60%)',
             }}
           />
 
-          <div className="relative h-full flex items-center justify-between px-5 sm:px-6 gap-4">
-            {/* 左側：Logo 與標題 */}
-            <div className="flex items-center gap-4 min-w-0">
-              {/* Logo（含白底微光膠囊提升辨識度）*/}
-              <div className="bg-white/95 px-3 py-1 rounded-lg shadow-sm flex items-center justify-center flex-shrink-0">
+          <div className="relative h-full flex items-center justify-between px-4 sm:px-6 gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="bg-white/95 px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center flex-shrink-0">
                 <Image
                   src={config.logoPath}
                   alt="長庚大學 Logo"
@@ -152,62 +230,72 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
                   unoptimized
                   priority
                   className="object-contain"
-                  style={{ width: 'auto', height: '26px' }}
+                  style={{ width: 'auto', height: '24px' }}
                 />
               </div>
 
-              {/* 分隔微光線 */}
               <div className="h-7 w-px bg-white/20 hidden sm:block flex-shrink-0" />
 
-              {/* 中文標題區 */}
               <div className="min-w-0">
-                <p className="text-blue-200/90 text-[11px] font-semibold tracking-widest uppercase leading-none mb-0.5 truncate">
+                <p className="text-blue-200/90 text-[10px] sm:text-[11px] font-semibold tracking-widest uppercase leading-none mb-0.5 truncate">
                   長庚大學技術合作處
                 </p>
-                <h1 className="text-white text-base sm:text-lg font-extrabold tracking-wide leading-tight truncate">
+                <h1 className="text-white text-sm sm:text-lg font-extrabold tracking-wide leading-tight truncate">
                   創新育成中心 空間預約系統
                 </h1>
               </div>
             </div>
 
-            {/* 右側：狀態徽章 */}
-            <div className="flex items-center gap-2 bg-white/10 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/15 text-xs text-white/90 shadow-sm flex-shrink-0">
+            <div
+              className="hidden sm:flex items-center gap-2 bg-white/10 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/15 text-xs text-white/90 shadow-sm flex-shrink-0"
+              title={connectionHealthy ? 'Google 日曆連線正常' : '連線異常，請稍後再試或聯繫管理員'}
+            >
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+                <span
+                  className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                    connectionHealthy ? 'bg-emerald-400' : 'bg-amber-400'
+                  }`}
+                />
+                <span
+                  className={`relative inline-flex rounded-full h-2 w-2 ${
+                    connectionHealthy ? 'bg-emerald-400' : 'bg-amber-400'
+                  }`}
+                />
               </span>
-              <span className="font-medium">Google 日曆即時連線</span>
+              <span className="font-medium">
+                {connectionHealthy ? 'Google 日曆連線正常' : '連線異常，顯示可能非最新'}
+              </span>
             </div>
           </div>
 
-          {/* 底部霓虹漸層線 */}
           <div
             className="absolute bottom-0 left-0 right-0 h-[2px]"
-            style={{ background: 'linear-gradient(90deg, transparent 5%, #60a5fa 30%, #93c5fd 50%, #60a5fa 70%, transparent 95%)' }}
+            style={{
+              background:
+                'linear-gradient(90deg, transparent 5%, #60a5fa 30%, #93c5fd 50%, #60a5fa 70%, transparent 95%)',
+            }}
           />
         </header>
 
-        {/* ── 主體：左右分割 ── */}
-        <div className="flex flex-1 overflow-hidden">
-
-          {/* ── 左欄：場地列表 ── */}
-          <aside className="w-72 xl:w-80 bg-white border-r border-slate-200/90 flex flex-col flex-shrink-0 overflow-hidden shadow-sm z-10">
-
-            {/* 左欄標題列 */}
+        {/* ── 主體：桌機左右分割、手機單欄 ── */}
+        <div className="flex flex-1 md:overflow-hidden">
+          {/* 左欄：場地列表（手機隱藏，改由上方 chips 選場地） */}
+          <aside className="hidden md:flex w-72 xl:w-80 bg-white border-r border-slate-200/90 flex-col flex-shrink-0 overflow-hidden shadow-sm z-10">
             <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-3.5 bg-blue-600 rounded-full" />
-                <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wider">可預約場地</h2>
+                <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  可預約場地
+                </h2>
               </div>
               <span className="text-[11px] font-semibold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">
                 共 {availableCount} 間開放
               </span>
             </div>
 
-            {/* 場地卡片清單 */}
             <div className="flex-1 overflow-y-auto p-3 space-y-3">
-              {displaySpaces.map(space => {
-                const disabled = isSpaceDisabled(space)
+              {displaySpaces.map((space) => {
+                const disabled = isSpaceDisabled(space.id)
                 const accent = getAccentColor(space.colorId)
                 const isActive = activeSpaceId === space.id
 
@@ -216,16 +304,12 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
                     key={space.id}
                     className={`group relative rounded-2xl overflow-hidden border transition-all duration-200 ${
                       disabled
-                        ? 'opacity-50 border-slate-200 bg-slate-50 cursor-not-allowed'
+                        ? 'opacity-60 border-slate-200 bg-slate-50'
                         : isActive
-                        ? 'border-blue-500 bg-blue-50/40 shadow-md ring-2 ring-blue-500/20'
-                        : 'border-slate-200/80 bg-white hover:border-blue-300 hover:shadow-md cursor-pointer'
+                          ? 'border-blue-500 bg-blue-50/40 shadow-md ring-2 ring-blue-500/20'
+                          : 'border-slate-200/80 bg-white hover:border-blue-300 hover:shadow-md'
                     }`}
-                    onClick={() => {
-                      if (!disabled) setActiveSpaceId(isActive ? undefined : space.id)
-                    }}
                   >
-                    {/* 照片區 */}
                     <div className="relative h-28 w-full overflow-hidden bg-slate-200">
                       <Image
                         src={space.image}
@@ -236,10 +320,8 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
                         }`}
                         sizes="(max-width: 1280px) 288px, 320px"
                       />
-                      {/* 暗色保護遮罩 */}
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-900/30 to-transparent" />
 
-                      {/* 左上狀態標籤 */}
                       <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
                         {disabled ? (
                           <span className="text-[11px] font-semibold bg-slate-800/85 text-white/90 backdrop-blur-sm px-2.5 py-0.5 rounded-full shadow">
@@ -260,14 +342,12 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
                         )}
                       </div>
 
-                      {/* 右上容納人數膠囊 */}
                       <div className="absolute top-2.5 right-2.5">
                         <span className="text-[11px] font-semibold bg-black/50 text-white backdrop-blur-sm px-2 py-0.5 rounded-full shadow">
                           👥 最多 {space.capacity} 人
                         </span>
                       </div>
 
-                      {/* 圖片底部空間名稱（對比清晰）*/}
                       <div className="absolute bottom-2 left-3 right-3 flex items-end justify-between">
                         <p className="text-white font-bold text-sm tracking-wide drop-shadow-sm truncate">
                           {space.name}
@@ -275,31 +355,41 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
                       </div>
                     </div>
 
-                    {/* 卡片下半資訊與動作列 */}
                     <div className="p-3">
-                      {/* 設備與特性標籤 */}
                       <div className="flex flex-wrap gap-1 mb-3">
-                        {space.features.slice(0, 3).map((f) => (
+                        {space.features.slice(0, 3).map((feature) => (
                           <span
-                            key={f}
+                            key={feature}
                             className="text-[11px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-medium"
                           >
-                            {f}
+                            {feature}
                           </span>
                         ))}
                       </div>
 
-                      {/* 按鈕與操作提示 */}
                       <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
-                        <span className="text-[11px] text-slate-400 font-medium">
+                        <button
+                          type="button"
+                          aria-pressed={isActive}
+                          onClick={() => {
+                            if (disabled) return
+                            setActiveSpaceId(isActive ? undefined : space.id)
+                          }}
+                          disabled={disabled}
+                          className={`text-[11px] font-medium rounded-md px-2 py-1 transition-colors ${
+                            disabled
+                              ? 'text-slate-400 cursor-not-allowed'
+                              : 'text-slate-500 hover:text-blue-700 hover:bg-blue-50'
+                          }`}
+                        >
                           {isActive ? '已啟用日曆過濾' : '點選過濾日曆'}
-                        </span>
+                        </button>
 
                         {!disabled && (
                           <button
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
+                            onClick={() => {
+                              setSelectedDate(undefined)
                               setBookingSpace(space)
                             }}
                             className="text-xs font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-95 px-3.5 py-1.5 rounded-lg shadow-sm hover:shadow transition-all flex items-center gap-1"
@@ -315,29 +405,26 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
               })}
             </div>
 
-            {/* 左欄底部提示說明 */}
             <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/80 flex-shrink-0">
               <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
                 <span className="text-blue-500 font-bold">💡</span>
-                <span>點擊卡片可篩選日曆；點「預約」或「日曆日期」可立即申請借用。</span>
+                <span>點卡片可篩選日曆；點「預約」或日曆日期即可申請借用。</span>
               </p>
             </div>
           </aside>
 
-          {/* ── 右欄：行事曆 ── */}
-          <main className="flex-1 flex flex-col overflow-hidden bg-slate-50/50">
-
-            {/* 行事曆頂部互動篩選列（Legend & Filter Pills）*/}
-            <div className="px-6 py-3 border-b border-slate-200/80 bg-white flex flex-wrap items-center justify-between gap-3 flex-shrink-0 shadow-sm z-10">
-              {/* 左邊：互動式場地篩選標籤 */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1">
+          {/* 右欄：行事曆 */}
+          <main className="flex-1 flex flex-col md:overflow-hidden bg-slate-50/50 min-w-0">
+            <div className="px-4 sm:px-6 py-3 border-b border-slate-200/80 bg-white flex flex-wrap items-center justify-between gap-3 flex-shrink-0 shadow-sm z-10">
+              <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1 hidden sm:inline">
                   場地檢視：
                 </span>
 
-                {/* 全部場地 Chip */}
                 <button
+                  type="button"
                   onClick={() => setActiveSpaceId(undefined)}
+                  aria-pressed={activeSpaceId === undefined}
                   className={`text-xs px-3 py-1 rounded-full font-semibold transition-all ${
                     activeSpaceId === undefined
                       ? 'bg-slate-800 text-white shadow-sm'
@@ -347,18 +434,23 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
                   全部場地
                 </button>
 
-                {/* 各場地標籤 Chip */}
-                {displaySpaces.map(space => {
+                {displaySpaces.map((space) => {
                   const accent = getAccentColor(space.colorId)
                   const isSelected = activeSpaceId === space.id
+                  const disabled = isSpaceDisabled(space.id)
                   return (
                     <button
                       key={space.id}
+                      type="button"
+                      aria-pressed={isSelected}
+                      disabled={disabled}
                       onClick={() => setActiveSpaceId(isSelected ? undefined : space.id)}
                       className={`text-xs px-3 py-1 rounded-full font-semibold transition-all flex items-center gap-1.5 border ${
                         isSelected
                           ? 'border-slate-800 bg-slate-800 text-white shadow-sm'
-                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                          : disabled
+                            ? 'border-slate-200 bg-slate-100 text-slate-400'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                       }`}
                     >
                       <span
@@ -371,16 +463,16 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
                 })}
               </div>
 
-              {/* 右邊：當前狀態提示 */}
               <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500">
                 {activeSpace ? (
                   <div className="flex items-center gap-1.5 text-blue-700 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-100 font-medium">
                     <span>目前篩選：</span>
                     <strong className="font-bold">{activeSpace.name}</strong>
                     <button
+                      type="button"
                       onClick={() => setActiveSpaceId(undefined)}
                       className="ml-1 text-slate-400 hover:text-slate-600"
-                      title="清除篩選"
+                      aria-label="清除場地篩選"
                     >
                       ✕
                     </button>
@@ -393,12 +485,14 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
               </div>
             </div>
 
-            {/* FullCalendar 本體 */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-4 min-h-full">
+            <div className="flex-1 md:overflow-y-auto p-3 sm:p-6">
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-3 sm:p-4 min-h-full">
                 <Calendar
                   selectedSpaceId={activeSpaceId}
+                  spaceOverrides={config.spaceOverrides}
+                  refreshKey={refreshKey}
                   onDateClick={handleDateClick}
+                  onStatusChange={handleCalendarStatus}
                 />
               </div>
             </div>
@@ -409,44 +503,53 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
       {/* ── 預約 Modal ── */}
       {bookingSpace && (
         <div
-          className="fixed inset-0 bg-slate-950/65 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200"
-          onClick={e => { if (e.target === e.currentTarget) setBookingSpace(null) }}
+          className="fixed inset-0 bg-slate-950/65 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeBooking()
+          }}
         >
-          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[92vh] overflow-hidden flex flex-col shadow-2xl border border-slate-100 ring-1 ring-black/5">
-
-            {/* Modal 頂部 Header */}
+          <div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="booking-modal-title"
+            className="bg-white rounded-3xl max-w-4xl w-full max-h-[92dvh] overflow-hidden flex flex-col shadow-2xl border border-slate-100 ring-1 ring-black/5"
+          >
             <div
-              className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white"
+              className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-slate-100 bg-white"
               style={{ borderLeftWidth: 6, borderLeftColor: getAccentColor(bookingSpace.colorId) }}
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 <span
                   className="w-3.5 h-3.5 rounded-full flex-shrink-0 shadow-sm"
                   style={{ backgroundColor: getAccentColor(bookingSpace.colorId) }}
                 />
-                <div>
-                  <h2 className="font-bold text-slate-800 text-lg sm:text-xl leading-tight">
+                <div className="min-w-0">
+                  <h2
+                    id="booking-modal-title"
+                    className="font-bold text-slate-800 text-base sm:text-xl leading-tight truncate"
+                  >
                     預約 {bookingSpace.name}
                   </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                  <p className="text-xs text-slate-400 mt-0.5 hidden sm:block">
                     請填寫以下資訊以完成 Google 日曆空間預約登記
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => setBookingSpace(null)}
-                className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-500 hover:text-slate-700 flex items-center justify-center transition-all"
-                aria-label="關閉"
+                ref={closeButtonRef}
+                type="button"
+                onClick={closeBooking}
+                className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-500 hover:text-slate-700 flex items-center justify-center transition-all flex-shrink-0"
+                aria-label="關閉預約視窗"
               >
                 ✕
               </button>
             </div>
 
-            {/* Modal 主體 */}
             <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
-
-              {/* 左側：場地詳情面板 */}
-              <div className="md:w-[36%] bg-slate-50 border-r border-slate-100 overflow-y-auto flex-shrink-0">
+              {/* 場地詳情：手機隱藏，避免把表單擠出畫面 */}
+              <div className="hidden md:block md:w-[36%] bg-slate-50 border-r border-slate-100 overflow-y-auto flex-shrink-0">
                 <div className="relative h-44 w-full bg-slate-200">
                   <Image
                     src={bookingSpace.image}
@@ -471,7 +574,6 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
                     {bookingSpace.description}
                   </p>
 
-                  {/* 規格微卡片 */}
                   <div className="grid grid-cols-2 gap-3 mb-5">
                     <div className="bg-white rounded-xl p-3.5 border border-slate-200/80 shadow-sm text-center">
                       <p className="text-slate-400 text-xs font-medium mb-1">容納人數</p>
@@ -489,24 +591,22 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
                     </div>
                   </div>
 
-                  {/* 設施標籤 */}
                   <div className="mb-5">
                     <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
                       場地配備
                     </p>
                     <div className="flex flex-wrap gap-1.5">
-                      {bookingSpace.features.map(f => (
+                      {bookingSpace.features.map((feature) => (
                         <span
-                          key={f}
-                          className="text-xs px-2.5 py-1 bg-white text-slate-700 rounded-lg border border-slate-200/90 font-medium shadow-2xs"
+                          key={feature}
+                          className="text-xs px-2.5 py-1 bg-white text-slate-700 rounded-lg border border-slate-200/90 font-medium shadow-sm"
                         >
-                          ✓ {f}
+                          ✓ {feature}
                         </span>
                       ))}
                     </div>
                   </div>
 
-                  {/* 借用須知小卡 */}
                   <div className="pt-4 border-t border-slate-200/80">
                     <div className="bg-blue-50/70 border border-blue-100 rounded-xl p-3.5">
                       <p className="text-xs font-bold text-blue-900 mb-1.5 flex items-center gap-1.5">
@@ -523,13 +623,13 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
                 </div>
               </div>
 
-              {/* 右側：預約表單 */}
-              <div className="md:w-[64%] overflow-y-auto p-6 sm:p-8 bg-white">
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-8 bg-white">
                 <BookingForm
                   space={bookingSpace}
                   initialDate={selectedDate}
                   formFields={config.formFields}
-                  onClose={() => { setBookingSpace(null); setSelectedDate(undefined); }}
+                  onClose={closeBooking}
+                  onSuccess={() => setRefreshKey((key) => key + 1)}
                 />
               </div>
             </div>
@@ -540,27 +640,24 @@ const Home: NextPage<IndexProps> = ({ initialConfig }) => {
   )
 }
 
-export const getServerSideProps: GetServerSideProps = async () => {
-  try {
-    const raw = await readAppConfig()
-    return {
-      props: {
-        initialConfig: {
-          logoPath: typeof raw.logoPath === 'string' && raw.logoPath ? raw.logoPath : '/images/my-logo.svg',
-          disabledSpaceIds: Array.isArray(raw.disabledSpaceIds) ? raw.disabledSpaceIds.map(String) : ['2', '1', '5'],
-          disabledSpaceNames: Array.isArray(raw.disabledSpaceNames) ? raw.disabledSpaceNames.map(String) : ['共創空間', '創新發想基地', 'DEMO ROOM'],
-          spaceOverrides: typeof raw.spaceOverrides === 'object' ? raw.spaceOverrides : { '3': { name: 'C01會議室' }, '4': { name: 'C02會議室' } },
-          hideDisabled: raw.hideDisabled !== undefined ? !!raw.hideDisabled : true,
-          formFields: typeof raw.formFields === 'object' ? raw.formFields : {},
-        },
+export const getServerSideProps: GetServerSideProps<IndexProps> = async () => {
+  // 動態匯入：readAppConfig 會用到 fs / @vercel/kv，不能進 client bundle
+  const { readAppConfigMeta } = await import('@/utils/appConfig')
+  const { resolveDisabledSpaceIds } = await import('@/utils/configSchema')
+
+  const { config, degraded } = await readAppConfigMeta()
+
+  return {
+    props: {
+      initialConfig: {
+        logoPath: config.logoPath,
+        disabledSpaceIds: resolveDisabledSpaceIds(config),
+        spaceOverrides: config.spaceOverrides,
+        hideDisabled: config.hideDisabled,
+        formFields: config.formFields,
       },
-    }
-  } catch {
-    return {
-      props: {
-        initialConfig: DEFAULT_CONFIG,
-      },
-    }
+      configDegraded: degraded,
+    },
   }
 }
 

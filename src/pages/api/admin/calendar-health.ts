@@ -1,9 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { google } from 'googleapis'
-import { JWT } from 'google-auth-library'
-import { readAppConfig } from '@/utils/appConfig'
+import { readAppConfigMeta } from '@/utils/appConfig'
+import { getGoogleAuth, CALENDAR_READ_SCOPE } from '@/utils/googleCalendarService'
+import { taipeiMonthRange } from '@/config/bookingRules'
 
 type Health = {
+  healthy: boolean
   env: {
     hasGOOGLE_CREDENTIALS: boolean
     credentialsParsed: boolean
@@ -12,6 +14,10 @@ type Health = {
   calendarId: {
     value?: string
     from: 'config' | 'env' | 'none'
+  }
+  config: {
+    degraded: boolean
+    source: string
   }
   auth: {
     ok: boolean
@@ -22,6 +28,7 @@ type Health = {
     count?: number
     sampleTitles?: string[]
     error?: string
+    range?: { start: string; end: string }
   }
 }
 
@@ -31,78 +38,83 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const health: Health = {
+    healthy: false,
     env: {
-      hasGOOGLE_CREDENTIALS: !!process.env.GOOGLE_CREDENTIALS,
-      credentialsParsed: false
+      hasGOOGLE_CREDENTIALS: false,
+      credentialsParsed: false,
     },
     calendarId: { from: 'none' },
-    auth: { ok: false }
+    config: { degraded: false, source: 'unknown' },
+    auth: { ok: false },
   }
 
-  let calendarId = process.env.CALENDAR_ID || ''
+  const { config, degraded, source } = await readAppConfigMeta({ skipCache: true })
+  health.config = { degraded, source }
 
-  try {
-    const cfg = await readAppConfig()
-    if (cfg.googleCalendarId && typeof cfg.googleCalendarId === 'string' && cfg.googleCalendarId.trim()) {
-      calendarId = cfg.googleCalendarId.trim()
-      health.calendarId = { value: calendarId, from: 'config' }
-    } else {
-      health.calendarId = { value: calendarId || undefined, from: calendarId ? 'env' : 'none' }
+  let calendarId = ''
+  if (config.googleCalendarId && config.googleCalendarId.trim()) {
+    calendarId = config.googleCalendarId.trim()
+    health.calendarId = { value: calendarId, from: 'config' }
+  } else if (process.env.CALENDAR_ID && process.env.CALENDAR_ID.trim()) {
+    calendarId = process.env.CALENDAR_ID.trim()
+    health.calendarId = { value: calendarId, from: 'env' }
+  }
+
+  const envCredentials = process.env.GOOGLE_CREDENTIALS
+  health.env.hasGOOGLE_CREDENTIALS = Boolean(envCredentials)
+  if (envCredentials) {
+    try {
+      const parsed = JSON.parse(envCredentials)
+      health.env.credentialsParsed = Boolean(parsed?.client_email && parsed?.private_key)
+      health.env.clientEmail = parsed?.client_email
+    } catch {
+      health.env.credentialsParsed = false
     }
-  } catch {
-    health.calendarId = { value: calendarId || undefined, from: calendarId ? 'env' : 'none' }
-  }
-
-  let credentials: any = {}
-  try {
-    credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS || '{}')
-    health.env.credentialsParsed = true
-    health.env.clientEmail = credentials.client_email
-  } catch (e: any) {
-    health.env.credentialsParsed = false
   }
 
   try {
-    const privateKey: string = (credentials.private_key || '').includes('\\n')
-      ? (credentials.private_key || '').replace(/\\n/g, '\n')
-      : (credentials.private_key || '')
-
-    const auth = new JWT({
-      email: credentials.client_email,
-      key: privateKey,
-      scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
-    })
-    await auth.authorize()
+    // 與正式booking流程共用同一組 auth 快取，健康檢查才有代表性
+    const auth = await getGoogleAuth([CALENDAR_READ_SCOPE])
     health.auth.ok = true
 
     if (calendarId) {
       const calendar = google.calendar({ version: 'v3', auth })
-      const now = new Date()
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString()
+      const range = taipeiMonthRange()
       try {
         const response = await calendar.events.list({
           calendarId,
-          timeMin: startOfMonth,
-          timeMax: endOfMonth,
+          timeMin: new Date(`${range.start}T00:00:00+08:00`).toISOString(),
+          timeMax: new Date(`${range.end}T23:59:59+08:00`).toISOString(),
           singleEvents: true,
-          orderBy: 'startTime'
+          orderBy: 'startTime',
+          maxResults: 100,
+          fields: 'items(id,summary,start)',
         })
         const items = response.data.items || []
         health.eventsProbe = {
           ok: true,
           count: items.length,
-          sampleTitles: items.slice(0, 5).map((e) => e.summary || '無標題')
+          sampleTitles: items.slice(0, 5).map((event) => event.summary || '無標題'),
+          range,
         }
-      } catch (err: any) {
-        health.eventsProbe = { ok: false, error: err?.message || 'events.list failed' }
+      } catch (error: any) {
+        health.eventsProbe = {
+          ok: false,
+          error: error?.message || 'events.list failed',
+          range,
+        }
       }
     }
-  } catch (e: any) {
+  } catch (error: any) {
     health.auth.ok = false
-    health.auth.error = e?.message || 'authorize failed'
+    health.auth.error = error?.message || 'authorize failed'
   }
 
+  health.healthy =
+    health.env.credentialsParsed && health.auth.ok && health.eventsProbe?.ok === true
+
+  // 監控用：/api/admin/calendar-health?strict=1  unhealthy 時回 503
+  const strict = req.query.strict === '1' || req.query.strict === 'true'
   res.setHeader('Cache-Control', 'no-store')
-  return res.status(200).json(health)
+  return res.status(strict && !health.healthy ? 503 : 200).json(health)
 }

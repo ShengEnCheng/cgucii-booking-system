@@ -219,3 +219,15 @@
     @apply block mb-1.5 text-xs font-bold text-slate-600 uppercase tracking-wider;
   }
 }
+
+/* 尊重使用者的減少動態偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

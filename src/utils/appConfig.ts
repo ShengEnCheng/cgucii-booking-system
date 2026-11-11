@@ -1,70 +1,118 @@
-import fs from 'fs'
-import path from 'path'
-
-// 後台可編輯設定的存放邏輯。
+// 後台設定的讀寫（server-only）。
 //
-// 在 Vercel 這類 serverless 平台上，專案檔案系統在執行階段是唯讀的，
-// 直接寫入 src/config/app-config.json 不會真正保存（也不會跨執行環境共用）。
-// 因此正式環境改用 Vercel KV 儲存；本機開發（沒有設定 KV_REST_API_URL /
-// KV_REST_API_TOKEN 時）則維持寫入本地 JSON 檔案，方便直接開發測試。
+// 正式環境（Vercel）使用 Vercel KV；本機開發沒有 KV 時退回讀寫
+// src/config/app-config.json。這裡只處理 IO，型別與正規化在 configSchema.ts，
+// 讓 client 端可以安全地匯入設定型別與判斷邏輯。
 
-export type AppConfig = {
-  logoPath: string
-  disabledSpaceIds: string[]
-  disabledSpaceNames: string[]
-  spaceOverrides: Record<string, { name?: string; image?: string }>
-  hideDisabled: boolean
-  formFields: Record<string, { show?: boolean; required?: boolean; label?: string }>
-  eventFilters: { spacesOnly?: boolean; allowKeywords?: string[]; ignoreKeywords?: string[] }
-  googleCalendarId: string
-  useGoogleColors: boolean
-}
+import {
+  DEFAULT_APP_CONFIG,
+  normalizeAppConfig,
+  type AppConfig,
+} from './configSchema'
 
-export const DEFAULT_APP_CONFIG: AppConfig = {
-  logoPath: '/images/my-logo.svg',
-  disabledSpaceIds: [],
-  disabledSpaceNames: [],
-  spaceOverrides: {},
-  hideDisabled: false,
-  formFields: {},
-  eventFilters: { spacesOnly: false, allowKeywords: [], ignoreKeywords: [] },
-  googleCalendarId: '',
-  useGoogleColors: true,
-}
+export { DEFAULT_APP_CONFIG, normalizeAppConfig }
+export type { AppConfig }
 
 const KV_KEY = 'app-config'
-const localConfigPath = path.join(process.cwd(), 'src', 'config', 'app-config.json')
+const CONFIG_FILE = ['src', 'config', 'app-config.json']
+const CACHE_TTL_MS = 10_000
 
-function hasKv() {
-  return !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
+type CachedConfig = {
+  config: AppConfig
+  expiresAt: number
 }
 
-export async function readAppConfig(): Promise<AppConfig> {
-  if (hasKv()) {
-    try {
-      const { kv } = await import('@vercel/kv')
-      const cfg = await kv.get<Partial<AppConfig>>(KV_KEY)
-      return cfg ? { ...DEFAULT_APP_CONFIG, ...cfg } : DEFAULT_APP_CONFIG
-    } catch (e) {
-      console.error('讀取 Vercel KV 設定失敗，改用預設值:', e)
-      return DEFAULT_APP_CONFIG
-    }
+let cache: CachedConfig | null = null
+let lastReadDegraded = false
+let lastReadSource: ConfigSource = 'default'
+
+export type ConfigSource = 'kv' | 'file' | 'default'
+
+export function hasKv(): boolean {
+  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
+}
+
+export function invalidateAppConfigCache(): void {
+  cache = null
+}
+
+/** 最近一次讀取是否為「讀不到、回落預設值」。用來讓健康檢查與公開設定回報 degraded。 */
+export function wasConfigDegraded(): boolean {
+  return lastReadDegraded
+}
+
+export function getConfigSource(): ConfigSource {
+  return lastReadSource
+}
+
+async function readFromKv(): Promise<AppConfig> {
+  const { kv } = await import('@vercel/kv')
+  const stored = await kv.get<Partial<AppConfig>>(KV_KEY)
+  return normalizeAppConfig(stored)
+}
+
+async function readFromFile(): Promise<AppConfig> {
+  const fs = await import('fs')
+  const path = await import('path')
+  const filePath = path.join(process.cwd(), ...CONFIG_FILE)
+  const content = fs.readFileSync(filePath, 'utf8')
+  return normalizeAppConfig(JSON.parse(content))
+}
+
+export type AppConfigReadResult = {
+  config: AppConfig
+  degraded: boolean
+  source: ConfigSource
+}
+
+/**
+ * 讀取設定（含 10 秒 in-process 快取）。
+ *
+ * 注意：讀取失敗時仍會回傳安全的預設值（不會讓網站整個掛掉），但會把
+ * degraded 標記起來，讓 /api/public-config 與健康檢查能明確告警，
+ * 而不是像舊版一樣靜默地把場地停用、把日曆 ID 清空。
+ */
+export async function readAppConfigMeta(options: { skipCache?: boolean } = {}): Promise<AppConfigReadResult> {
+  const now = Date.now()
+  if (!options.skipCache && cache && cache.expiresAt > now) {
+    return { config: cache.config, degraded: lastReadDegraded, source: lastReadSource }
   }
 
   try {
-    const content = fs.readFileSync(localConfigPath, 'utf8')
-    return { ...DEFAULT_APP_CONFIG, ...JSON.parse(content) }
-  } catch {
-    return DEFAULT_APP_CONFIG
+    const config = hasKv() ? await readFromKv() : await readFromFile()
+    cache = { config, expiresAt: now + CACHE_TTL_MS }
+    lastReadDegraded = false
+    lastReadSource = hasKv() ? 'kv' : 'file'
+    return { config, degraded: false, source: lastReadSource }
+  } catch (error) {
+    console.error('[appConfig] 讀取設定失敗，暫用安全預設值:', error)
+    lastReadDegraded = true
+    lastReadSource = 'default'
+    return { config: normalizeAppConfig(DEFAULT_APP_CONFIG), degraded: true, source: 'default' }
   }
 }
 
-export async function writeAppConfig(cfg: AppConfig): Promise<void> {
+export async function readAppConfig(): Promise<AppConfig> {
+  const { config } = await readAppConfigMeta()
+  return config
+}
+
+/** 寫入設定：一律先正規化，避免把非法結構存進去造成所有 API 崩潰。 */
+export async function writeAppConfig(config: AppConfig): Promise<AppConfig> {
+  const normalized = normalizeAppConfig(config)
+
   if (hasKv()) {
     const { kv } = await import('@vercel/kv')
-    await kv.set(KV_KEY, cfg)
-    return
+    await kv.set(KV_KEY, normalized)
+  } else {
+    const fs = await import('fs')
+    const path = await import('path')
+    const filePath = path.join(process.cwd(), ...CONFIG_FILE)
+    fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2), 'utf8')
   }
 
-  fs.writeFileSync(localConfigPath, JSON.stringify(cfg, null, 2), 'utf8')
+  cache = { config: normalized, expiresAt: Date.now() + CACHE_TTL_MS }
+  lastReadDegraded = false
+  lastReadSource = hasKv() ? 'kv' : 'file'
+  return normalized
 }
