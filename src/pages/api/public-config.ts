@@ -12,7 +12,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const { config, degraded } = await readAppConfigMeta()
+  const { config, degraded, source } = await readAppConfigMeta()
   const disabledIds = resolveDisabledSpaceIds(config)
 
   res.setHeader('Cache-Control', 'public, s-maxage=20, stale-while-revalidate=40')
@@ -38,5 +38,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     })),
     // true 表示後端讀不到正式設定、目前是安全預設值（前端可據此顯示提示）
     degraded,
+    // 設定來源：kv / file / bundled / default（不含任何機密，方便確認 KV 是否生效）
+    configSource: source,
   })
 }

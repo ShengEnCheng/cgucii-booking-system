@@ -5,6 +5,7 @@
 // 讓 client 端可以安全地匯入設定型別與判斷邏輯。
 
 import bundledConfig from '@/config/app-config.json'
+import { hasKv, kvGetJson, kvSet } from './kv'
 import {
   DEFAULT_APP_CONFIG,
   normalizeAppConfig,
@@ -40,9 +41,7 @@ export function readBundledConfig(): AppConfig {
   return normalizeAppConfig(bundledConfig as unknown as Partial<AppConfig>)
 }
 
-export function hasKv(): boolean {
-  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
-}
+export { hasKv }
 
 export function invalidateAppConfigCache(): void {
   cache = null
@@ -58,8 +57,7 @@ export function getConfigSource(): ConfigSource {
 }
 
 async function readFromKv(): Promise<AppConfig> {
-  const { kv } = await import('@vercel/kv')
-  const stored = await kv.get<Partial<AppConfig>>(KV_KEY)
+  const stored = await kvGetJson<Partial<AppConfig>>(KV_KEY)
   return normalizeAppConfig(stored)
 }
 
@@ -126,8 +124,7 @@ export async function writeAppConfig(config: AppConfig): Promise<AppConfig> {
   const normalized = normalizeAppConfig(config)
 
   if (hasKv()) {
-    const { kv } = await import('@vercel/kv')
-    await kv.set(KV_KEY, normalized)
+    await kvSet(KV_KEY, normalized)
   } else {
     const fs = await import('fs')
     const path = await import('path')

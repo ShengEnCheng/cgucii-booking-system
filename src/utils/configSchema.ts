@@ -2,7 +2,7 @@
 //
 // 這個檔案必須保持「純函式、無 IO」：client 端（首頁、日曆、後台）與 server 端
 // 都會匯入它。真正需要 fs / Vercel KV 的讀寫一律放在 appConfig.ts，避免把
-// server-only 的模組（fs、@vercel/kv）打進瀏覽器 bundle。
+// server-only 的模組（fs、Redis REST 金鑰）打進瀏覽器 bundle。
 
 import { spaces } from '@/data/spaces'
 

@@ -659,7 +659,7 @@ const Home: NextPage<IndexProps> = ({ initialConfig, configDegraded }) => {
 }
 
 export const getServerSideProps: GetServerSideProps<IndexProps> = async () => {
-  // 動態匯入：readAppConfig 會用到 fs / @vercel/kv，不能進 client bundle
+  // 動態匯入：readAppConfig 會用到 fs 與 Redis 金鑰，不能進 client bundle
   const { readAppConfigMeta } = await import('@/utils/appConfig')
   const { resolveDisabledSpaceIds } = await import('@/utils/configSchema')
 

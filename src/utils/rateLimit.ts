@@ -5,6 +5,7 @@
 //（本機開發、或 KV 暫時故障時的保底，只在單一實例內有效）。
 
 import type { NextApiRequest } from 'next'
+import { hasKv, kvExpire, kvIncr } from './kv'
 
 type MemoryBucket = {
   count: number
@@ -21,10 +22,6 @@ export type RateLimitResult = {
   remaining: number
   retryAfterSeconds: number
   scope: RateLimitScope
-}
-
-function hasKv(): boolean {
-  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
 }
 
 function consumeMemory(key: string, limit: number, windowMs: number): RateLimitResult {
@@ -76,14 +73,13 @@ export async function consumeRateLimit(
 ): Promise<RateLimitResult> {
   if (hasKv()) {
     try {
-      const { kv } = await import('@vercel/kv')
       const windowIndex = Math.floor(Date.now() / windowMs)
       const kvKey = `ratelimit:${key}:${windowIndex}`
 
-      const count = await kv.incr(kvKey)
+      const count = await kvIncr(kvKey)
       if (count === 1) {
         // 第一個請求才設 TTL，避免每次都延長
-        await kv.expire(kvKey, Math.ceil(windowMs / 1000) + 1)
+        await kvExpire(kvKey, Math.ceil(windowMs / 1000) + 1)
       }
 
       const resetAt = (windowIndex + 1) * windowMs

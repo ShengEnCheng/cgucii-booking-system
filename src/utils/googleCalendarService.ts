@@ -3,6 +3,7 @@
 import { google } from 'googleapis'
 import { JWT } from 'google-auth-library'
 import { readAppConfig } from './appConfig'
+import { hasKv, kvDel, kvGet, kvSet } from './kv'
 import type { AppConfig } from './configSchema'
 
 export interface GoogleCredentials {
@@ -193,7 +194,7 @@ export function releaseLocalLock(key: string, token: string): void {
 }
 
 export function hasKvLockStore(): boolean {
-  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
+  return hasKv()
 }
 
 /** 取得 KV 分散式鎖；未設定 KV 時回傳 true（僅靠本機鎖，適用單實例）。 */
@@ -201,9 +202,7 @@ export async function acquireKvLock(key: string, token: string, ttlSeconds = 60)
   if (!hasKvLockStore()) return true
 
   try {
-    const { kv } = await import('@vercel/kv')
-    const result = await kv.set(`lock:${key}`, token, { nx: true, ex: ttlSeconds })
-    return result === 'OK'
+    return await kvSet(`lock:${key}`, token, { onlyIfAbsent: true, ttlSeconds })
   } catch (error) {
     // 舊版在這裡 return true 直接放行，等於讓防重複預約失效；
     // 現在改成明確失敗，由呼叫端回 503 讓使用者重試。
@@ -217,10 +216,9 @@ export async function releaseKvLock(key: string, token: string): Promise<void> {
   if (!hasKvLockStore()) return
 
   try {
-    const { kv } = await import('@vercel/kv')
-    const current = await kv.get<string>(`lock:${key}`)
+    const current = await kvGet(`lock:${key}`)
     if (current === token) {
-      await kv.del(`lock:${key}`)
+      await kvDel(`lock:${key}`)
     }
   } catch (error) {
     console.warn('[lock] KV 釋放鎖失敗:', error)

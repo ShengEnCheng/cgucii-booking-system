@@ -4,19 +4,19 @@ const kvStore = new Map<string, number>()
 const kvCalls = { incr: 0, expire: 0 }
 let kvShouldFail = false
 
-vi.mock('@vercel/kv', () => ({
-  kv: {
-    incr: async (key: string) => {
-      kvCalls.incr += 1
-      if (kvShouldFail) throw new Error('kv down')
-      const next = (kvStore.get(key) || 0) + 1
-      kvStore.set(key, next)
-      return next
-    },
-    expire: async () => {
-      kvCalls.expire += 1
-      return 1
-    },
+// 模擬 KV 存取層（正式環境走 Upstash REST，測試不連外）
+vi.mock('@/utils/kv', () => ({
+  hasKv: () => Boolean(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL),
+  kvIncr: async (key: string) => {
+    kvCalls.incr += 1
+    if (kvShouldFail) throw new Error('kv down')
+    const next = (kvStore.get(key) || 0) + 1
+    kvStore.set(key, next)
+    return next
+  },
+  kvExpire: async () => {
+    kvCalls.expire += 1
+    return undefined
   },
 }))
 
