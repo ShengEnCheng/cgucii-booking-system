@@ -180,9 +180,13 @@ const Calendar = memo(function Calendar({
         </div>
       )}
 
+      {/* 錯誤訊息用浮動卡片覆蓋在日曆上方：不佔用版面高度，避免出現錯誤時造成 CLS */}
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center justify-between gap-3">
-          <span role="alert">{error}</span>
+        <div
+          role="alert"
+          className="absolute top-2 left-2 right-2 sm:left-auto sm:right-2 sm:max-w-sm z-30 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl shadow-lg text-sm flex items-center justify-between gap-3"
+        >
+          <span>{error}</span>
           <button
             type="button"
             onClick={() => setReloadToken((value) => value + 1)}
@@ -203,6 +207,9 @@ const Calendar = memo(function Calendar({
           right: 'dayGridMonth,timeGridWeek,timeGridDay',
         }}
         eventDisplay="block"
+        // 關閉日號與表頭的無 href 錨點（FullCalendar 預設會產生 <a> 但沒有 href，
+        // 會讓 Lighthouse 的 crawlable-anchors 與鍵盤操作判定扣分）
+        navLinks={false}
         selectable={Boolean(onDateClick)}
         dateClick={
           onDateClick

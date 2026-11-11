@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import Head from 'next/head'
 import Image from 'next/image'
 import { spaces } from '@/data/spaces'
-import { isSafeAssetPath } from '@/utils/configSchema'
+import { isSafeAssetPath, spaceDisplayName } from '@/utils/configSchema'
+import { taipeiMonthRange } from '@/config/bookingRules'
 import toast, { Toaster } from 'react-hot-toast'
 
 const SNAPSHOT_KEYS = [
@@ -24,6 +25,32 @@ function snapshotOf(source: Record<string, unknown>): string {
   return JSON.stringify(picked)
 }
 
+// 後台預約管理的資料結構。
+// 刻意不從 API route 檔匯入型別：該檔案依賴 server-only 的 googleapis，
+// 一旦被前端 import 就會把整套 Google SDK 打進瀏覽器 bundle。
+type AdminBooking = {
+  eventId: string
+  spaceId: string
+  spaceName: string
+  title: string
+  applicant: string
+  phone: string
+  email: string
+  participants: string
+  unit: string
+  departmentName: string
+  purpose: string
+  start: string
+  end: string
+  allDay: boolean
+}
+
+/** 時間顯示：`2026-11-12T09:00` → `2026-11-12 09:00`；全天事件補上「（全天）」。 */
+function formatBookingTime(value: string, allDay: boolean): string {
+  if (!value) return '—'
+  return allDay ? `${value}（全天）` : value.replace('T', ' ')
+}
+
 export default function Admin() {
   const [logoPath, setLogoPath] = useState('')
   const [disabledIds, setDisabledIds] = useState<string[]>([])
@@ -37,7 +64,24 @@ export default function Admin() {
   const [saving, setSaving] = useState(false)
   const [configDegraded, setConfigDegraded] = useState(false)
   const [loadedSnapshot, setLoadedSnapshot] = useState('')
-  const [activeTab, setActiveTab] = useState<'health' | 'spaces' | 'fields' | 'system'>('health')
+  const [activeTab, setActiveTab] = useState<'health' | 'spaces' | 'fields' | 'system' | 'bookings'>('health')
+
+  // 預約管理狀態：日期區間預設為台北時區的當月
+  const [bookingRange, setBookingRange] = useState<{ start: string; end: string }>({ start: '', end: '' })
+  const [bookingQuery, setBookingQuery] = useState('')
+  const [bookingSpaceId, setBookingSpaceId] = useState('')
+  const [bookings, setBookings] = useState<AdminBooking[]>([])
+  const [bookingsLoading, setBookingsLoading] = useState(false)
+  const [bookingsLoaded, setBookingsLoaded] = useState(false)
+  const [bookingsError, setBookingsError] = useState('')
+  const [cancelingEventId, setCancelingEventId] = useState('')
+
+  // 預設日期區間＝台北時區的當月。
+  // 刻意放在 effect 內計算而不是 useState 的初始值：/admin 是靜態預渲染頁面，
+  // 初始值若在 build 當下就固定，使用者隔月才開頁面會看到上個月。
+  useEffect(() => {
+    setBookingRange(taipeiMonthRange())
+  }, [])
 
   // 日曆連線診斷狀態
   const [health, setHealth] = useState<any>(null)
@@ -158,6 +202,101 @@ export default function Admin() {
     }
   }
 
+  // ── 預約管理：查詢／匯出／取消 ────────────────────────────────────────────
+
+  /** 查詢與匯出 CSV 共用同一組條件，避免兩邊條件不一致 */
+  const buildBookingParams = useCallback(
+    (format: 'json' | 'csv'): string => {
+      const params = new URLSearchParams({
+        start: bookingRange.start,
+        end: bookingRange.end,
+      })
+      const keyword = bookingQuery.trim()
+      if (keyword) params.set('q', keyword)
+      if (bookingSpaceId) params.set('spaceId', bookingSpaceId)
+      if (format === 'csv') params.set('format', 'csv')
+      return params.toString()
+    },
+    [bookingRange.start, bookingRange.end, bookingQuery, bookingSpaceId]
+  )
+
+  const queryBookings = useCallback(async () => {
+    setBookingsLoading(true)
+    setBookingsError('')
+    const t = toast.loading('正在查詢預約資料...')
+    try {
+      const r = await fetch(`/api/admin/bookings?${buildBookingParams('json')}`)
+      const data = await r.json().catch(() => null)
+      if (r.ok) {
+        const list: AdminBooking[] = Array.isArray(data) ? data : []
+        setBookings(list)
+        toast.success(
+          list.length > 0 ? `查詢完成，共 ${list.length} 筆預約` : '查詢完成，此區間沒有預約',
+          { id: t }
+        )
+      } else {
+        const message = (data as { error?: string } | null)?.error || '查詢失敗，請稍後再試'
+        setBookings([])
+        setBookingsError(message)
+        toast.error(message, { id: t })
+      }
+      setBookingsLoaded(true)
+    } catch (e) {
+      setBookings([])
+      setBookingsLoaded(true)
+      setBookingsError('查詢失敗，請檢查網路連線或稍後再試')
+      toast.error('查詢失敗，請檢查網路連線或稍後再試', { id: t })
+    } finally {
+      setBookingsLoading(false)
+    }
+  }, [buildBookingParams])
+
+  // 第一次切到「預約管理」分頁時自動載入當月資料，省一次點擊
+  useEffect(() => {
+    if (activeTab === 'bookings' && !bookingsLoaded && !bookingsLoading) {
+      queryBookings()
+    }
+  }, [activeTab, bookingsLoaded, bookingsLoading, queryBookings])
+
+  const exportBookingsCsv = () => {
+    // 直接讓瀏覽器下載：同源請求會沿用已通過的 Basic Auth，不必自己處理 headers
+    window.location.href = `/api/admin/bookings?${buildBookingParams('csv')}`
+  }
+
+  const cancelBooking = async (booking: AdminBooking) => {
+    const confirmText = [
+      '確定要取消這筆預約嗎？',
+      '',
+      `時間：${formatBookingTime(booking.start, booking.allDay)}`,
+      `場地：${booking.spaceName || '未指定場地'}`,
+      `申請人：${booking.applicant || '—'}`,
+      '',
+      '取消後會直接刪除 Google 日曆上的事件，無法復原。',
+    ].join('\n')
+    if (!window.confirm(confirmText)) return
+
+    setCancelingEventId(booking.eventId)
+    const t = toast.loading('正在取消預約...')
+    try {
+      const r = await fetch(`/api/admin/bookings?eventId=${encodeURIComponent(booking.eventId)}`, {
+        method: 'DELETE',
+      })
+      const data = await r.json().catch(() => null)
+      if (r.ok) {
+        toast.success('預約已取消，已同步刪除日曆事件', { id: t })
+        // 重新查詢一次，確保畫面與 Google 日曆完全一致
+        await queryBookings()
+      } else {
+        const message = (data as { error?: string } | null)?.error || '取消失敗，請稍後再試'
+        toast.error(message, { id: t })
+      }
+    } catch (e) {
+      toast.error('取消失敗，請檢查網路連線或稍後再試', { id: t })
+    } finally {
+      setCancelingEventId('')
+    }
+  }
+
   return (
     <>
       <Head>
@@ -223,6 +362,7 @@ export default function Admin() {
               { id: 'spaces', label: '🏢 場地與停用管理' },
               { id: 'fields', label: '📝 預約表單欄位' },
               { id: 'system', label: '⚙️ 系統與過濾設定' },
+              { id: 'bookings', label: '📅 預約管理' },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -687,6 +827,195 @@ export default function Admin() {
               </div>
             </div>
           )}
+          {/* TAB 5: 預約管理 */}
+          {activeTab === 'bookings' && (
+            <div className="space-y-6">
+              {/* 查詢條件 */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6">
+                <h2 className="text-base font-bold text-slate-800 mb-1">預約查詢與匯出</h2>
+                <p className="text-xs text-slate-500 mb-4">
+                  資料即時來自 Google 日曆，單次查詢區間上限 62 天；匯出的 CSV 已帶 UTF-8
+                  BOM，可直接用 Excel 開啟
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="form-label">開始日期</label>
+                    <input
+                      type="date"
+                      className="input-field"
+                      value={bookingRange.start}
+                      onChange={(e) => setBookingRange((prev) => ({ ...prev, start: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">結束日期</label>
+                    <input
+                      type="date"
+                      className="input-field"
+                      value={bookingRange.end}
+                      onChange={(e) => setBookingRange((prev) => ({ ...prev, end: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">關鍵字</label>
+                    <input
+                      className="input-field"
+                      value={bookingQuery}
+                      onChange={(e) => setBookingQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !bookingsLoading) queryBookings()
+                      }}
+                      placeholder="標題／申請人／單位／用途"
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">場地</label>
+                    <select
+                      className="input-field"
+                      value={bookingSpaceId}
+                      onChange={(e) => setBookingSpaceId(e.target.value)}
+                    >
+                      <option value="">全部場地</option>
+                      {spaces.map((space) => (
+                        <option key={space.id} value={space.id}>
+                          {spaceDisplayName(space, { spaceOverrides })}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5 mt-4">
+                  <button
+                    onClick={queryBookings}
+                    disabled={bookingsLoading}
+                    className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-95 text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-md shadow-blue-500/20 transition-all disabled:opacity-50"
+                  >
+                    {bookingsLoading ? '⏳ 查詢中...' : '🔍 查詢'}
+                  </button>
+                  <button
+                    onClick={exportBookingsCsv}
+                    className="bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 text-sm font-bold px-5 py-2.5 rounded-xl transition-all"
+                  >
+                    ⬇️ 匯出 CSV
+                  </button>
+                  {bookingsLoaded && !bookingsLoading && !bookingsError && (
+                    <span className="text-xs text-slate-500">共 {bookings.length} 筆</span>
+                  )}
+                </div>
+              </div>
+
+              {/* 查詢結果 */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6">
+                <h2 className="text-base font-bold text-slate-800 mb-4">查詢結果</h2>
+
+                {bookingsLoading ? (
+                  <div className="py-12 text-center text-sm text-slate-400">
+                    ⏳ 正在讀取 Google 日曆資料...
+                  </div>
+                ) : bookingsError ? (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+                    <p className="text-sm font-bold text-rose-700">⚠️ 查詢失敗</p>
+                    <p className="text-xs text-rose-600 mt-1 leading-relaxed">{bookingsError}</p>
+                  </div>
+                ) : !bookingsLoaded ? (
+                  <div className="py-12 text-center text-sm text-slate-400">
+                    設定條件後點選「查詢」，即可載入預約資料
+                  </div>
+                ) : bookings.length === 0 ? (
+                  <div className="py-12 text-center text-sm text-slate-400">
+                    <p className="font-semibold text-slate-500 mb-1">📭 此區間沒有符合條件的預約</p>
+                    <p className="text-xs">試著放寬日期區間，或清除關鍵字／場地條件</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto -mx-1 px-1">
+                    <table className="w-full min-w-[900px] text-sm border-collapse">
+                      <thead>
+                        <tr className="text-left text-xs text-slate-500 tracking-wider border-b border-slate-200">
+                          <th className="py-2.5 pr-3 font-bold whitespace-nowrap">時間</th>
+                          <th className="py-2.5 pr-3 font-bold">場地</th>
+                          <th className="py-2.5 pr-3 font-bold">申請人</th>
+                          <th className="py-2.5 pr-3 font-bold">聯絡方式</th>
+                          <th className="py-2.5 pr-3 font-bold whitespace-nowrap">人數</th>
+                          <th className="py-2.5 pr-3 font-bold">用途</th>
+                          <th className="py-2.5 font-bold whitespace-nowrap">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {bookings.map((booking) => (
+                          <tr key={booking.eventId} className="align-top hover:bg-slate-50/70 transition-colors">
+                            <td className="py-3 pr-3 whitespace-nowrap">
+                              <div className="font-semibold text-slate-800">
+                                {formatBookingTime(booking.start, booking.allDay)}
+                              </div>
+                              {booking.end && booking.end !== booking.start && (
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                  至 {formatBookingTime(booking.end, booking.allDay)}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-3 pr-3">
+                              <div className="font-medium text-slate-800">
+                                {booking.spaceName || '未指定場地'}
+                              </div>
+                              <div
+                                className="text-[11px] text-slate-400 max-w-[180px] truncate mt-0.5"
+                                title={booking.title}
+                              >
+                                {booking.title}
+                              </div>
+                            </td>
+                            <td className="py-3 pr-3">
+                              <div className="font-medium text-slate-800">
+                                {booking.applicant || '—'}
+                              </div>
+                              {(booking.unit || booking.departmentName) && (
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                  {[booking.unit, booking.departmentName].filter(Boolean).join(' / ')}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-3 pr-3">
+                              {booking.phone && <div className="text-slate-700">{booking.phone}</div>}
+                              {booking.email && (
+                                <div className="text-[11px] text-slate-500 break-all mt-0.5">
+                                  {booking.email}
+                                </div>
+                              )}
+                              {!booking.phone && !booking.email && (
+                                <span className="text-slate-400">—</span>
+                              )}
+                            </td>
+                            <td className="py-3 pr-3 whitespace-nowrap text-slate-700">
+                              {booking.participants ? `${booking.participants} 人` : '—'}
+                            </td>
+                            <td className="py-3 pr-3">
+                              <div
+                                className="text-slate-700 line-clamp-2 max-w-[240px]"
+                                title={booking.purpose}
+                              >
+                                {booking.purpose || '—'}
+                              </div>
+                            </td>
+                            <td className="py-3">
+                              <button
+                                onClick={() => cancelBooking(booking)}
+                                disabled={cancelingEventId === booking.eventId}
+                                className="text-xs font-bold bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50 whitespace-nowrap"
+                              >
+                                {cancelingEventId === booking.eventId ? '處理中...' : '取消預約'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </main>
 
         {/* ── 底部懸浮儲存列 ── */}
@@ -725,3 +1054,7 @@ export default function Admin() {
   )
 }
 
+// 這個頁面必須是 SSR：middleware 依請求產生 CSP nonce，靜態頁面無法取得。
+export async function getServerSideProps() {
+  return { props: {} }
+}

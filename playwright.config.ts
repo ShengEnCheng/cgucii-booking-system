@@ -14,11 +14,15 @@ export default defineConfig({
     baseURL: BASE_URL,
     trace: 'retain-on-failure',
   },
+  // 用 production build 跑 E2E：不受 dev 模式 Fast Refresh 造成的重載與編譯時序影響，
+  // 也更接近實際部署（含正式 CSP）。建置時間較長，因此拉高 webServer timeout。
   webServer: {
-    command: `npm run dev -- -p ${PORT}`,
+    command: `npm run build && npm run start -- -p ${PORT}`,
     url: BASE_URL,
-    timeout: 180_000,
-    reuseExistingServer: !process.env.CI,
+    timeout: 300_000,
+    // 一律自己啟動：重複使用殘留的伺服器容易在兩次執行之間被關閉，導致連線被拒
+    reuseExistingServer: false,
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 1000 },
   },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },

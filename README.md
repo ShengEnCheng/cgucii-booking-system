@@ -13,7 +13,10 @@
 - 即時查看各場地可用狀態（FullCalendar 月／週／日檢視）
 - 線上預約、送出前後各做一次衝堂檢查，避免重複預約
 - Google Calendar 整合（服務帳戶，時區固定 Asia/Taipei）
+- **自助取消**：預約成功後取得 30 天有效的簽章連結，可自行取消（寄件信箱也會收到同一條連結）
+- **通知信**：預約成功與取消時寄信給申請人（Resend 或自訂 Webhook，選填）
 - 後台管理頁面（`/admin`，HTTP Basic Auth）：場地開關、名稱／圖片覆寫、表單欄位必填、事件過濾與配色、日曆連線診斷
+- **後台預約管理**：日期區間／關鍵字／場地篩選、CSV 匯出（Excel 相容）、單筆取消
 - 響應式版面：桌機左右分割、手機單欄
 - Vercel 部署（Vercel KV 儲存後台設定）
 
@@ -24,7 +27,10 @@
 | `GOOGLE_CREDENTIALS` | ✅ | Google 服務帳戶 JSON（單行） |
 | `CALENDAR_ID` | ✅ | 要寫入的 Google Calendar ID |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | ✅ | `/admin` 的 Basic Auth 帳密；未設定時後台直接回 500 拒絕 |
-| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | 建議 | Vercel KV，用來保存後台設定與分散式鎖；未設定時本機改寫入 `src/config/app-config.json` |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | 建議 | Vercel KV：保存後台設定、分散式鎖與**跨實例限流**；未設定時本機改寫入 `src/config/app-config.json`，限流退回單實例記憶體 |
+| `BOOKING_TOKEN_SECRET` | 建議 | 取消預約連結的 HMAC 簽章金鑰（≥16 字元）。未設定時以 `GOOGLE_CREDENTIALS` 推導（輪替憑證會使舊取消連結失效） |
+| `RESEND_API_KEY` / `MAIL_WEBHOOK_URL` / `MAIL_FROM` | 選填 | 預約／取消通知信。設定 Resend 或自訂 Webhook 其一即可；未設定時不寄信，預約流程完全不受影響 |
+| `NEXT_PUBLIC_SITE_URL` | 選填 | 取消連結使用的站台網址（缺少 forwarded header 時的後備） |
 
 本機開發：`cp .env.local.example .env.local` 後填入上述值。
 
@@ -38,7 +44,8 @@ npm start           # 啟動生產伺服器
 npm run lint        # ESLint
 npm run typecheck   # TypeScript 型別檢查
 npm run test        # vitest 單元測試
-npm run test:e2e    # Playwright 端對端測試（會自動啟動 dev server）
+npm run test:e2e    # Playwright 端對端測試（會自動 build 並啟動 production server）
+npx -y @lhci/cli@0.14 autorun   # Lighthouse 效能量測（需先 npm run build，預設量測 :3000）
 ```
 
 ## 專案結構
@@ -70,13 +77,17 @@ tests/                          vitest 單元測試
 4. **公開 API 不回傳個資**：`/api/calendar-events` 只回 `id/title/start/end/color/location/applicant/spaceId`，`applicant` 由伺服器擷取並清理，完整 description（含電話、Email）不對外。
 5. **預約寫入失敗要能回滾**：insert 之後任何步驟失敗都會嘗試刪除剛建立的事件，避免留下孤兒事件把時段卡死。
 6. **設定讀取失敗不得靜默改變行為**：`readAppConfigMeta()` 會回報 `degraded`，`DEFAULT_APP_CONFIG` 不包含任何停用場地。
-7. **場地圖片一律用 webp**：原始 jpg 已轉檔並移除（總大小 1.4MB → 180KB），`spaces.ts` 內另附 16px 的 `blurDataURL` 作為載入前的模糊預覽；新增圖片請比照辦理，並在 `next.config.js` 的 `images.formats` 下由優化器輸出 avif/webp。
+7. **取消預約用無狀態簽章**：token 為 `base64url(payload).hmac`，內含 eventId／spaceId／到期時間；伺服器不存資料，`BOOKING_TOKEN_SECRET` 即撤銷金鑰。
+8. **CSP 採 nonce 式**：`src/middleware.ts` 為每個文件請求產生 nonce，`_document.tsx` 從回應標頭取出並套到 Next 的腳本；因此**所有頁面都必須是 SSR**（`getServerSideProps`）。`404`／`500` 是 Next 的靜態頁，無法取得 nonce，其腳本會被 CSP 擋下（頁面仍可正常顯示靜態內容）。
+9. **限流優先走 KV**：`consumeRateLimit()` 在設定 KV 時用 `INCR` 做跨實例固定視窗；KV 故障才退回單實例記憶體。
+10. **場地圖片一律用 webp**：原始 jpg 已轉檔並移除（總大小 1.4MB → 180KB），`spaces.ts` 內另附 16px 的 `blurDataURL` 作為載入前的模糊預覽；新增圖片請比照辦理，並在 `next.config.js` 的 `images.formats` 下由優化器輸出 avif/webp。
 
 ## 測試與 CI
 
 - `tests/` 覆蓋可用性判斷、預約規則（日期合法性、營業時間、時長）、設定正規化、輸入清理與限流。
 - `.github/workflows/ci.yml` 在 push / PR 時依序執行 lint → typecheck → test → build，再跑一輪 Playwright E2E。
 - E2E 涵蓋：首頁與日曆載入、預約對話框開啟／Esc 關閉、必填欄位阻擋送出、時段選項範圍、公開 API 不洩漏個資與內部錯誤、手機版版面無水平溢出。
+- `.github/workflows/lighthouse.yml` 另外跑 Lighthouse CI（3 次取中位數）：performance ≥0.93、accessibility ≥0.93、best-practices ≥0.92、SEO ≥0.90、LCP ≤4s、CLS ≤0.1。CI 沒有 Google 憑證，`/api/calendar-events` 會回 500 並顯示浮動錯誤提示，best-practices 門檻已據此設定。
 - `e2e/booking-submit.spec.ts` 以 `page.route()` 攔截 `check-availability` / `submit-booking`，在不需真實 Google 憑證的情況下驗證完整送單流程（成功、409 衝突、503 無法確認、容量超限），並斷言送出內容包含 `spaceId` 且不含 `colorId`。
 
 ## 部署（Vercel）

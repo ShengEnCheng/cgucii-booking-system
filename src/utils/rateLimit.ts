@@ -1,45 +1,49 @@
-// 極簡固定視窗限流。
+// 公開端點的限流。
 //
-// 沒有外部服務時的權衡：計數存在單一 serverless 實例的記憶體中，屬於
-// 「盡力而為」的防護（能擋掉單一來源的暴量請求與誤觸重送），不是嚴格的
-// 全域限流。若之後接了 Redis，可把 consumeRateLimit 換成 KV 計數即可，
-// 呼叫端不需要改。
+// 有設定 Vercel KV（正式環境）時使用 KV 的原子 INCR 做固定視窗計數，
+// 多個 serverless 實例共享同一份計數；沒有 KV 時退回單實例記憶體計數
+//（本機開發、或 KV 暫時故障時的保底，只在單一實例內有效）。
 
 import type { NextApiRequest } from 'next'
 
-type Bucket = {
+type MemoryBucket = {
   count: number
   resetAt: number
 }
 
-const buckets = new Map<string, Bucket>()
+const buckets = new Map<string, MemoryBucket>()
 const MAX_BUCKETS = 20_000
 
-function purgeExpired(now: number): void {
-  for (const [key, bucket] of buckets) {
-    if (bucket.resetAt <= now) buckets.delete(key)
-  }
-}
+export type RateLimitScope = 'kv' | 'memory'
 
 export type RateLimitResult = {
   ok: boolean
   remaining: number
   retryAfterSeconds: number
+  scope: RateLimitScope
 }
 
-export function consumeRateLimit(key: string, limit: number, windowMs: number): RateLimitResult {
+function hasKv(): boolean {
+  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
+}
+
+function consumeMemory(key: string, limit: number, windowMs: number): RateLimitResult {
   const now = Date.now()
 
-  if (buckets.size > MAX_BUCKETS) purgeExpired(now)
+  if (buckets.size > MAX_BUCKETS) {
+    for (const [bucketKey, bucket] of buckets) {
+      if (bucket.resetAt <= now) buckets.delete(bucketKey)
+    }
+  }
 
   const existing = buckets.get(key)
   if (!existing || existing.resetAt <= now) {
-    const resetAt = now + windowMs
-    buckets.set(key, { count: 1, resetAt })
+    buckets.set(key, { count: 1, resetAt: now + windowMs })
     return {
       ok: true,
       remaining: Math.max(0, limit - 1),
       retryAfterSeconds: Math.ceil(windowMs / 1000),
+      scope: 'memory',
     }
   }
 
@@ -48,6 +52,7 @@ export function consumeRateLimit(key: string, limit: number, windowMs: number): 
       ok: false,
       remaining: 0,
       retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)),
+      scope: 'memory',
     }
   }
 
@@ -56,7 +61,45 @@ export function consumeRateLimit(key: string, limit: number, windowMs: number): 
     ok: true,
     remaining: Math.max(0, limit - existing.count),
     retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)),
+    scope: 'memory',
   }
+}
+
+/**
+ * 消耗一次額度。key 建議帶上端點名稱與用戶端 IP。
+ * 固定視窗：key 內含 windowIndex，時間到自然換算新 key，不需清理。
+ */
+export async function consumeRateLimit(
+  key: string,
+  limit: number,
+  windowMs: number
+): Promise<RateLimitResult> {
+  if (hasKv()) {
+    try {
+      const { kv } = await import('@vercel/kv')
+      const windowIndex = Math.floor(Date.now() / windowMs)
+      const kvKey = `ratelimit:${key}:${windowIndex}`
+
+      const count = await kv.incr(kvKey)
+      if (count === 1) {
+        // 第一個請求才設 TTL，避免每次都延長
+        await kv.expire(kvKey, Math.ceil(windowMs / 1000) + 1)
+      }
+
+      const resetAt = (windowIndex + 1) * windowMs
+      return {
+        ok: count <= limit,
+        remaining: Math.max(0, limit - count),
+        retryAfterSeconds: Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
+        scope: 'kv',
+      }
+    } catch (error) {
+      // KV 故障不能讓整個站不能用，退回單實例限流並留下告警
+      console.error('[rateLimit] KV 計數失敗，改用記憶體限流:', error)
+    }
+  }
+
+  return consumeMemory(key, limit, windowMs)
 }
 
 /** 測試用：清空所有計數 */

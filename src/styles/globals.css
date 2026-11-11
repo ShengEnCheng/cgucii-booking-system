@@ -124,6 +124,13 @@
     transition: all 0.15s;
   }
 
+  /* 非當月日期：FullCalendar 預設用 opacity 壓淡，會被對比度檢查判為不足；
+     改用固定灰色並取消 opacity，視覺上仍可區分且符合 WCAG AA */
+  .fc .fc-day-other .fc-daygrid-day-number {
+    opacity: 1 !important;
+    color: #64748b !important;
+  }
+
   /* 今天日期高亮徽章 */
   .fc .fc-day-today .fc-daygrid-day-number {
     background-color: #2563eb;

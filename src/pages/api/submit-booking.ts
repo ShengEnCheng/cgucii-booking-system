@@ -32,6 +32,8 @@ import {
 } from '@/config/bookingRules'
 import { sanitizeMultiline, sanitizeText } from '@/utils/sanitize'
 import { consumeRateLimit, getClientIp } from '@/utils/rateLimit'
+import { buildCancelUrl, createCancelToken, resolveOrigin } from '@/utils/bookingToken'
+import { buildBookingConfirmation, sendMail } from '@/utils/mailer'
 
 // 限制 request body 大小，避免有人用超大 payload 灌爆 Google API
 export const config = {
@@ -71,7 +73,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // ── 0. 限流 ─────────────────────────────────────────────────────────────
   const ip = getClientIp(req)
-  const limit = consumeRateLimit(`booking:${ip}`, RATE_LIMIT.limit, RATE_LIMIT.windowMs)
+  const limit = await consumeRateLimit(`booking:${ip}`, RATE_LIMIT.limit, RATE_LIMIT.windowMs)
   if (!limit.ok) {
     res.setHeader('Retry-After', String(limit.retryAfterSeconds))
     return res.status(429).json({ error: '送出過於頻繁，請稍後再試' })
@@ -249,12 +251,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         throw error
       }
 
+      // ── 8. 簽發取消連結並寄送通知信 ─────────────────────────────────────
+      let cancelUrl = ''
+      if (newEventId) {
+        const cancelToken = createCancelToken(newEventId, String(matchedSpace.id))
+        cancelUrl = buildCancelUrl(resolveOrigin(req.headers), cancelToken)
+
+        if (email) {
+          // 寄信失敗不影響預約結果（sendMail 內部已吞掉所有錯誤）
+          const mail = buildBookingConfirmation({
+            spaceName,
+            date,
+            startTime,
+            endTime,
+            applicant: name || '您好',
+            cancelUrl,
+          })
+          await sendMail({ ...mail, to: email })
+        }
+      }
+
       return res.status(200).json({
         message: '預約成功',
         spaceName,
         date,
         startTime,
         endTime,
+        cancelUrl,
       })
     } finally {
       releaseLocalLock(lockKey, lockToken)

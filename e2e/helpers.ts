@@ -85,7 +85,14 @@ export async function mockBackend(page: Page, options: MockOptions = {}) {
     state.submitBody = route.request().postDataJSON()
     await route.fulfill({
       status: options.submitStatus ?? 200,
-      json: options.submitBody ?? { message: '預約成功' },
+      json: options.submitBody ?? {
+        message: '預約成功',
+        spaceName: 'C01會議室',
+        date: '2026-12-15',
+        startTime: '10:00',
+        endTime: '12:00',
+        cancelUrl: '/cancel?token=e2e-token',
+      },
     })
   })
 

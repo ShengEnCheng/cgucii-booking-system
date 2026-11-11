@@ -40,7 +40,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const limit = consumeRateLimit(`events:${getClientIp(req)}`, 60, 60 * 1000)
+  const limit = await consumeRateLimit(`events:${getClientIp(req)}`, 60, 60 * 1000)
   if (!limit.ok) {
     res.setHeader('Retry-After', String(limit.retryAfterSeconds))
     return res.status(429).json({ error: '查詢過於頻繁，請稍後再試' })

@@ -45,3 +45,5 @@ tsconfig.tsbuildinfo
 test-results/
 playwright-report/
 blob-report/
+
+# Lighthouse CI\.lighthouseci/

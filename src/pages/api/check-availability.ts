@@ -29,7 +29,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   res.setHeader('Cache-Control', 'private, no-store')
 
-  const limit = consumeRateLimit(
+  const limit = await consumeRateLimit(
     `availability:${getClientIp(req)}`,
     30,
     60 * 1000

@@ -16,6 +16,8 @@ npm start         # production server
 npm run lint      # ESLint (next lint)
 npm run typecheck # tsc --noEmit
 npm run test      # vitest run
+npm run test:e2e  # Playwright (builds and starts a production server)
+npx -y @lhci/cli@0.14 autorun  # Lighthouse CI (run npm run build first)
 ```
 
 ## Architecture
@@ -35,7 +37,9 @@ npm run test      # vitest run
 | `src/utils/availabilityUtils.ts` | Space identity (`[SPACE:<id>]` marker) and overlap detection. |
 | `src/utils/googleCalendarService.ts` | JWT caching, `events.list` with field masking and page cap, KV distributed lock with owner token. |
 | `src/utils/sanitize.ts` | Input cleaning, HTML escaping, applicant extraction. |
-| `src/utils/rateLimit.ts` | Per-instance fixed-window rate limiting for public endpoints. |
+| `src/utils/rateLimit.ts` | Fixed-window rate limiting; uses KV `INCR` when configured (shared across instances), otherwise per-instance memory. |
+| `src/utils/bookingToken.ts` | HMAC-signed cancel tokens (eventId + spaceId + expiry), origin resolution for cancel URLs. |
+| `src/utils/mailer.ts` | Booking/cancel notification email via Resend or a custom webhook. Never throws; booking succeeds even if mail fails. |
 
 ### Request flow
 
@@ -60,12 +64,21 @@ npm run test      # vitest run
 - Events are created with `timeZone: 'Asia/Taipei'` and a description carrying booking metadata plus the space marker.
 - `CALENDAR_ID` env var can be overridden by the value saved in the admin settings.
 
+## CSP and SSR requirement
+
+`src/middleware.ts` generates a per-request nonce and sets a nonce-based CSP. Next's Pages Router reads the nonce from the response's CSP header and applies it to its scripts; `src/pages/_document.tsx` forwards it. Consequences:
+
+- Every page that should hydrate **must be server-rendered** (`getServerSideProps`). Adding a new static page will break its hydration under CSP.
+- `pages/404` and `pages/500` cannot use `getServerSideProps` (Next restriction); their scripts are blocked by CSP, which is acceptable because those pages are static content only.
+- `script-src` has no `'unsafe-inline'` in production. Never reintroduce it; fix the code instead.
+- `style-src` still needs `'unsafe-inline'` because React `style` props and FullCalendar emit inline styles.
+
 ## Testing
 
-`tests/` holds vitest unit tests for availability logic, booking rules, config normalization, sanitization, and rate limiting. CI (`.github/workflows/ci.yml`) runs lint → typecheck → test → build. When changing booking rules or space identity logic, add or update the corresponding test first.
+`tests/` holds vitest unit tests for availability logic, booking rules, config normalization, sanitization, and rate limiting. CI (`.github/workflows/ci.yml`) runs lint → typecheck → test → build. When changing booking rules, space identity, cancel-token or mailer logic, add or update the corresponding test first. E2E (`npm run test:e2e`) runs against a production build and mocks backend APIs via `page.route()`.
 
 ## Security notes
 
 - Never commit credentials. `.gitignore` covers `.env.local`, `credentials.json`, `service-account.json`, `google-credentials.json*`, `cgu-incubation-booking-*.json`.
 - If a key was ever committed: rotate it in Google Cloud **first**, then purge history. History rewriting cannot undo an already-public key.
-- `next.config.js` sets CSP, `X-Frame-Options`, `Referrer-Policy` and other security headers for every route.
+- `src/middleware.ts` sets the nonce-based CSP per document request; `next.config.js` sets the request-invariant headers (`X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`, `Permissions-Policy`).

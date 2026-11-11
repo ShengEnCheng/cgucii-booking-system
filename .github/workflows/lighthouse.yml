@@ -1,0 +1,64 @@
+name: Lighthouse CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# 同一分支連續 push 時只保留最新一次量測，避免 runner 競爭與報告互相蓋台
+concurrency:
+  group: lighthouse-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lighthouse:
+    name: Lighthouse CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # build 不需要 Google 憑證：所有 Google API 呼叫都在請求時才發生。
+      # CI 沒有憑證，因此 /api/calendar-events 會回 500，前端會顯示錯誤橫幅，
+      # best-practices 會因為 console error 少 4 分（實測 0.96），門檻已據此設定。
+      - name: Build
+        run: npm run build
+
+      # ubuntu-latest 已預裝 Google Chrome，但路徑可能隨 runner 映像變動；
+      # 這裡自動偵測後匯出 CHROME_PATH；真的找不到就讓 chrome-launcher 自己去預設路徑找。
+      - name: Resolve Chrome path
+        run: |
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [ -n "$CHROME" ]; then
+            echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
+            echo "Using Chrome at $CHROME"
+            "$CHROME" --version
+          else
+            echo "::warning::No system Chrome found; relying on chrome-launcher default detection"
+          fi
+
+      # autorun = collect（3 runs）→ assert（.lighthouserc.json 門檻）→ upload
+      - name: Run Lighthouse CI
+        run: npx -y @lhci/cli@0.14 autorun
+
+      - name: Upload Lighthouse reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: .lighthouseci/
+          retention-days: 7

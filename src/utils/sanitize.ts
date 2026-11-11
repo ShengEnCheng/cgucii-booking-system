@@ -44,9 +44,19 @@ export function sanitizeMultiline(input: unknown, maxLength = 500): string {
   return maxLength > 0 ? cleaned.slice(0, maxLength) : cleaned
 }
 
+/** 從我們自己寫入的 description 取回某個欄位（例：申請者、電話、Email、用途） */
+export function extractDescriptionField(
+  description: string | null | undefined,
+  label: string,
+  maxLength = 200
+): string {
+  if (!description) return ''
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`${escaped}[：:]\\s*([^\\n\\r]*)`).exec(String(description))
+  return match ? sanitizeText(match[1], maxLength) : ''
+}
+
 /** 從 description 取回申請人姓名（給公開端點回傳脫敏後的欄位用） */
 export function extractApplicant(description?: string | null): string {
-  if (!description) return ''
-  const match = String(description).match(/申請者[：:]\s*([^\n\r]{1,60})/)
-  return match ? sanitizeText(match[1], 60) : ''
+  return extractDescriptionField(description, '申請者', 60)
 }

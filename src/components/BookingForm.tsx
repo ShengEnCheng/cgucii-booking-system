@@ -50,6 +50,13 @@ const BookingForm = memo(function BookingForm({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [availability, setAvailability] = useState<AvailabilityState>('idle')
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<{
+    cancelUrl?: string
+    spaceName?: string
+    date?: string
+    startTime?: string
+    endTime?: string
+  } | null>(null)
 
   const timeOptions = useMemo(() => generateTimeOptions(), [])
   const endTimeOptions = useMemo(() => generateEndTimeOptions(formData.startTime), [formData.startTime])
@@ -172,7 +179,13 @@ const BookingForm = memo(function BookingForm({
 
       toast.success('預約成功！已排入 Google 日曆', { id: loadingToast, duration: 4000 })
       onSuccess?.()
-      window.setTimeout(() => onClose(), 1200)
+      setSuccess({
+        cancelUrl: typeof data?.cancelUrl === 'string' ? data.cancelUrl : undefined,
+        spaceName: typeof data?.spaceName === 'string' ? data.spaceName : space.name,
+        date: typeof data?.date === 'string' ? data.date : formData.date,
+        startTime: typeof data?.startTime === 'string' ? data.startTime : formData.startTime,
+        endTime: typeof data?.endTime === 'string' ? data.endTime : formData.endTime,
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : '預約失敗，請稍後再試'
       setSubmitError(message)
@@ -231,6 +244,68 @@ const BookingForm = memo(function BookingForm({
     emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
     rose: 'border-rose-200 bg-rose-50 text-rose-800',
     amber: 'border-amber-200 bg-amber-50 text-amber-800',
+  }
+
+  if (success) {
+    return (
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4">
+          <p className="text-sm font-bold text-emerald-900 mb-1">✅ 預約成功，已排入 Google 日曆</p>
+          <p className="text-xs text-emerald-800/90 leading-relaxed">
+            {success.spaceName}｜{success.date}｜{success.startTime} - {success.endTime}
+          </p>
+        </div>
+
+        {success.cancelUrl ? (
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+            <p className="text-xs font-bold text-slate-700">需要取消嗎？請保留這個連結</p>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              取消連結自預約日起 30 天內有效，且僅能在活動開始前使用。若已設定通知信，
+              同一條連結也會寄到您的電子郵件。
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                readOnly
+                value={success.cancelUrl}
+                aria-label="取消預約連結"
+                className="flex-1 min-w-0 text-xs bg-white border border-slate-200 rounded-lg px-3 py-2 text-slate-600"
+                onFocus={(event) => event.currentTarget.select()}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard
+                    ?.writeText(success.cancelUrl as string)
+                    .then(() => toast.success('已複製取消連結'))
+                    .catch(() => toast.error('複製失敗，請手動選取'))
+                }}
+                className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-4 py-2 rounded-lg transition-colors"
+              >
+                複製連結
+              </button>
+            </div>
+            <a
+              href={success.cancelUrl}
+              className="inline-block text-xs font-semibold text-rose-600 hover:text-rose-700 underline underline-offset-2"
+            >
+              前往取消頁面
+            </a>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900 leading-relaxed">
+            如需取消，請聯繫育成中心窗口；系統未取得取消連結。
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-full py-3.5 rounded-xl font-bold text-sm bg-slate-800 hover:bg-slate-900 text-white transition-colors"
+        >
+          完成
+        </button>
+      </div>
+    )
   }
 
   return (
