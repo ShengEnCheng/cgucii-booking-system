@@ -58,7 +58,18 @@ export function getConfigSource(): ConfigSource {
 
 async function readFromKv(): Promise<AppConfig> {
   const stored = await kvGetJson<Partial<AppConfig>>(KV_KEY)
-  return normalizeAppConfig(stored)
+  if (stored) return normalizeAppConfig(stored)
+
+  // KV 是空的（剛接上 Upstash 時）：以 repo 內的設定作為初始值並寫回去。
+  // 否則場地停用狀態與自訂名稱會全部消失，前台看起來像「全部開放」。
+  const seed = readBundledConfig()
+  try {
+    await kvSet(KV_KEY, seed)
+    console.info('[appConfig] KV 尚無設定，已用 repo 內的 src/config/app-config.json 初始化')
+  } catch (error) {
+    console.warn('[appConfig] 初始化 KV 設定失敗（仍使用 repo 設定）:', error)
+  }
+  return seed
 }
 
 async function readFromFile(): Promise<AppConfig> {
